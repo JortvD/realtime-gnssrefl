@@ -5,6 +5,7 @@ pub struct Config {
     pub max_azimuth: f64,
     pub min_height: f64,
     pub max_height: f64,
+    pub step_size: f64,
 }
 
 impl Default for Config {
@@ -16,6 +17,7 @@ impl Default for Config {
             max_azimuth: 320.0,
             min_height: 5.0,
             max_height: 18.0,
+            step_size: 0.05,
         }
     }
 }

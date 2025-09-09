@@ -1,85 +1,130 @@
+use std::collections::VecDeque;
+
 use csv::Writer;
 
 mod db;
 mod nmea;
 mod config;
 mod gnssir;
+mod math;
 
-fn main() {
-    let config: config::Config = config::Config::default();
-    let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
-
-    let nmea_sentences = std::fs::read_to_string("data/nmea1.txt")
-        .expect("Failed to read data/nmea1.txt")
+fn read_nmea_file(file_path: &str) -> Vec<String> {
+    let start = std::time::Instant::now();
+    let lines = std::fs::read_to_string(file_path)
+        .expect("Failed to read NMEA file")
         .lines()
         .map(|line| line.to_string())
         .collect::<Vec<String>>();
+    println!("Reading NMEA file took: {:?}", start.elapsed());
+    lines
+}
 
-let start = std::time::Instant::now();
-    let records = nmea::nmea_to_records(nmea_sentences, &config);
-let duration = start.elapsed();
-    println!("NMEA parsing took: {:?}", duration);
+fn parse_nmea(nmea_sentences: Vec<String>, config: &config::Config) -> Vec<db::record::Record> {
+    let start = std::time::Instant::now();
+    let records = nmea::nmea_to_records(nmea_sentences, config);
+    println!("NMEA parsing took: {:?}", start.elapsed());
+    records
+}
+
+fn find_arcs(records: &VecDeque<db::record::Record>) -> Vec<db::arc::Arc> {
+    let start = std::time::Instant::now();
+    let arcs = gnssir::find_arcs(records);
+    println!("Finding arcs took: {:?}", start.elapsed());
+    arcs
+}
+
+fn process_arcs(arcs: &Vec<db::arc::Arc>, records: &mut VecDeque<db::record::Record>) {
+    let start = std::time::Instant::now();
+    for arc in arcs {
+        gnssir::fix_arc_elev_azim(arc, records);
+    }
+    println!("Fixing arc elevation and azimuth took: {:?}", start.elapsed());
+    let start = std::time::Instant::now();
+    for arc in arcs {
+        gnssir::correct_arc_snr(arc, records);
+    }
+    println!("Correcting arc SNR took: {:?}", start.elapsed());
+}
+
+fn start_csv(file_path: &str, headers: &[&str]) -> Writer<std::fs::File> {
+    let mut wtr = Writer::from_path(file_path).expect("Failed to create CSV file");
+    wtr.write_record(headers).expect("Failed to write header");
+    wtr
+}
+
+fn write_to_csv(wtr: &mut Writer<std::fs::File>, record: &[String]) {
+    wtr.write_record(record).expect("Failed to write record");
+}
+
+fn flush_csv(wtr: &mut Writer<std::fs::File>) {
+    wtr.flush().expect("Failed to flush CSV writer");
+}
+
+fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>, config: &config::Config) {
+    let mut wtr = start_csv("arc_freqs.csv", &["id", "frequency", "amplitude", "num"]);
+
+    let mut freqs: Vec<Vec<(f64, f64)>> = Vec::new();
+
+    let start = std::time::Instant::now();
+    for arc in arcs {
+        let start2 = std::time::Instant::now();
+        let frequencies = gnssir::find_arc_frequencies(arc, records, &config);
+        let duration2 = start2.elapsed();
+        println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
+
+        for (freq, amp) in &frequencies {
+            write_to_csv(&mut wtr, &[arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
+        }
+        freqs.push(frequencies);
+    }
+    println!("Frequency analysis took: {:?}", start.elapsed());
+
+    flush_csv(&mut wtr);
+
+    let start = std::time::Instant::now();
     
+    for (arc, frequencies) in arcs.iter().zip(freqs.iter()) {
+        if let Some((freq, amp)) = gnssir::find_max_amplitude_frequency(frequencies) {
+            let mean_elev = arc.record_indices.iter()
+                .filter_map(|&idx| records.get(idx).map(|rec| rec.elevation))
+                .sum::<f64>() / arc.record_indices.len() as f64;
+            let mean_azim = arc.record_indices.iter()
+                .filter_map(|&idx| records.get(idx).map(|rec| rec.azimuth))
+                .sum::<f64>() / arc.record_indices.len() as f64;
+            let mean_ampl = frequencies.iter().map(|(_,a)| *a).sum::<f64>() / frequencies.len() as f64;
+            let median_time = {
+                let mut times: Vec<i64> = arc.record_indices.iter()
+                    .filter_map(|&idx| records.get(idx).map(|rec| rec.time))
+                    .collect();
+                times.sort();
+                times[times.len() / 2]
+            };
+
+            println!("Arc ID {}: Max amplitude frequency {:.4} with amplitude {:.4} (mean: {:.4}) at mean elev {:.2}, azim {:.2}, median time {}, num records {}",
+                arc.sat_id, freq, amp, mean_ampl, mean_elev, mean_azim, median_time, arc.record_indices.len());
+        }
+    }
+    println!("Collecting results took: {:?}", start.elapsed());
+}
+
+fn main() {
+    let start: std::time::Instant = std::time::Instant::now();
+    let config: config::Config = config::Config::default();
+    let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
+
+    let nmea_sentences = read_nmea_file("data/nmea1.txt");
+    let records = parse_nmea(nmea_sentences, &config);
+
     println!("Parsed {} records from NMEA sentences.", records.len());
 
     record_db.insert_many(records);
 
     println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
-
-let start = std::time::Instant::now();
-    let mut arcs = gnssir::find_arcs(record_db.records.clone());
-let duration: std::time::Duration = start.elapsed();
-    println!("Finding arcs took: {:?}", duration);
-
-    // let arc0_records_indices = &arcs[1].record_indices;
-    // let arc0_records: Vec<&db::record::Record> = arc0_records_indices.iter().map(|&i| &record_db.records[i]).collect();
-    // let mut wtr = Writer::from_path("arc_0_pre.csv").expect("Failed to create CSV file");
-    // for record in arc0_records {
-    //     wtr.write_record(&[
-    //         record.id.to_string(),
-    //         record.snr.to_string(),
-    //         record.elevation.to_string(),
-    //         record.azimuth.to_string(),
-    //         record.time.to_string(),
-    //     ]).expect("Failed to write record");
-    // }
-    // wtr.flush().expect("Failed to flush CSV writer");
-
-let start = std::time::Instant::now();
-        
-    // let mut wtr = Writer::from_path(format!("arc_freqs.csv")).expect("Failed to create CSV file");
-    // wtr.write_record(&["id", "frequency", "amplitude"]).expect("Failed to write header");
-
-    for arc in &arcs {
-        gnssir::fix_arc_elev_azim(arc, &mut record_db.records);
-        gnssir::correct_arc_snr(arc, &mut record_db.records);
-
-        // for (freq, amp) in results {
-        //     wtr.write_record(&[arc.sat_id.to_string(), freq.to_string(), amp.to_string()]).expect("Failed to write record");
-        // }
-    }
-    // wtr.flush().expect("Failed to flush CSV writer");
-let duration = start.elapsed();
-    println!("Data correction took: {:?}", duration);
-
-let start = std::time::Instant::now();
-    for arc in &arcs {
-        let results = gnssir::find_arc_frequencies(arc, &record_db.records);
-        println!("Arc ID {}: Found {} frequency components", arc.sat_id, results.len());
-    }
-let duration = start.elapsed();
-    println!("Frequency analysis took: {:?}", duration);
-
-    // let arc0_records_corrected: Vec<&db::record::Record> = arc0_records_indices.iter().map(|&i| &record_db.records[i]).collect();
-    // let mut wtr = Writer::from_path("arc_0_post.csv").expect("Failed to create CSV file");
-    // for record in arc0_records_corrected {
-    //     wtr.write_record(&[
-    //         record.id.to_string(),
-    //         record.snr.to_string(),
-    //         record.elevation.to_string(),
-    //         record.azimuth.to_string(),
-    //         record.time.to_string(),
-    //     ]).expect("Failed to write record");
-    // }
-    // wtr.flush().expect("Failed to flush CSV writer");
+    
+    let arcs = find_arcs(&record_db.records);
+    println!("Found {} arcs in the records.", arcs.len());
+    
+    process_arcs(&arcs, &mut record_db.records);
+    find_results(&arcs, &record_db.records, &config);
+    println!("Total runtime: {:?}", start.elapsed());
 }

@@ -130,8 +130,6 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
             continue;
         }
 
-        // TODO: elevation and azimuth may need fix according to gnssrefl
-
         records.push(Record {
             id: header_num + id,
             elevation,
