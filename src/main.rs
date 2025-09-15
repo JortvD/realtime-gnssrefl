@@ -61,19 +61,20 @@ fn flush_csv(wtr: &mut Writer<std::fs::File>) {
 }
 
 fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>, config: &config::Config) {
-    let mut wtr = start_csv("arc_freqs.csv", &["id", "frequency", "amplitude", "num"]);
+    let mut wtr = start_csv("arc_freqs.csv", &["i", "id", "frequency", "amplitude", "num"]);
 
     let mut freqs: Vec<Vec<(f64, f64)>> = Vec::new();
 
     let start = std::time::Instant::now();
-    for arc in arcs {
+    for id in 0..arcs.len() {
+        let arc = &arcs[id];
         let start2 = std::time::Instant::now();
         let frequencies = gnssir::find_arc_frequencies(arc, records, &config);
         let duration2 = start2.elapsed();
         println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
 
         for (freq, amp) in &frequencies {
-            write_to_csv(&mut wtr, &[arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
+            write_to_csv(&mut wtr, &[id.to_string(), arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
         }
         freqs.push(frequencies);
     }
@@ -112,7 +113,7 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea1.txt");
+    let nmea_sentences = read_nmea_file("data/nmea.txt");
     let records = parse_nmea(nmea_sentences, &config);
 
     println!("Parsed {} records from NMEA sentences.", records.len());
