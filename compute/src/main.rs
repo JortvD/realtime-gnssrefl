@@ -1,6 +1,7 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use csv::Writer;
+use rppal::uart::{Parity, Uart};
 
 mod db;
 mod nmea;
@@ -113,8 +114,16 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea.txt");
-    let records = parse_nmea(nmea_sentences, &config);
+    // let nmea_sentences = read_nmea_file("data/nmea.txt");
+    // let records = parse_nmea(nmea_sentences, &config);
+    let mut uart = Uart::new(115_200, Parity::None, 8, 1).expect("Failed to open UART");
+    uart.set_read_mode(1, Duration::default()).expect("Failed to set read mode");
+
+    uart.send_start().expect("Failed to send start command");
+    let mut buffer = [0u8; 1024];
+    uart.read(&mut buffer).expect("Failed to read from UART");
+
+    let records = Vec::new();
 
     println!("Parsed {} records from NMEA sentences.", records.len());
 
