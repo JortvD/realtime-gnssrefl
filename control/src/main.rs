@@ -37,47 +37,8 @@ async fn main(_spawner: Spawner) {
         Default::default(),
     );
 
-    let mut buffer = Vec::<u8, 1024>::new();
+    let mut data = Vec::<u8, 4096>::new();
 
-    loop {
-        let line = readline(&mut uart, &mut buffer);
-    }
-}
-
-async fn readline(uart: &mut Uart<'static, embassy_rp::uart::Blocking>, buffer: &mut Vec<u8, 1024>) -> Vec<u8, 128> {
-    loop {
-        // Read up to 32 bytes into a temporary buffer
-        let mut temp = [0u8; 32];
-        match uart.read_blocking(&mut temp) {
-            Ok(n) if n > 0 => {
-                // Push read bytes into buffer
-                for &b in &temp[..n] {
-                    if buffer.push(b).is_err() {
-                        // Buffer full, drop oldest data
-                        buffer.clear();
-                        break;
-                    }
-                }
-                // Search for linebreak
-                if let Some(pos) = buffer.iter().position(|&c| c == b'\n' || c == b'\r') {
-                    // Copy up to linebreak into new Vec
-                    let mut line = Vec::<u8, 128>::new();
-                    for &b in &buffer[..pos] {
-                        let _ = line.push(b);
-                    }
-                    // Move remaining bytes to start of buffer
-                    let rest = buffer.len() - (pos + 1);
-                    for i in 0..rest {
-                        buffer[i] = buffer[pos + 1 + i];
-                    }
-                    buffer.truncate(rest);
-                    return line;
-                }
-            }
-            _ => {
-                // No data read, yield to other tasks
-                Timer::after_millis(1).await;
-            }
-        }
-    }
+    let lines = data.split(b'\n');
+    
 }
