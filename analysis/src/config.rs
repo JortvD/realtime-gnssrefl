@@ -12,10 +12,10 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             min_elevation: 5.0,
-            max_elevation: 90.0,
-            min_azimuth: 0.0,
-            max_azimuth: 360.0,
-            min_height: 1.0,
+            max_elevation: 20.0,
+            min_azimuth: 50.0,
+            max_azimuth: 170.0,
+            min_height: 3.0,
             max_height: 8.0,
             step_size: 0.01,
         }
