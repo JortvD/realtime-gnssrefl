@@ -5,14 +5,19 @@
 #![no_std]
 #![no_main]
 
+use core::str::Split;
+
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::gpio;
-use heapless::Vec;
+use heapless::{String, Vec};
 use embassy_time::Timer;
 use embassy_rp::uart::{Uart, Config};
 use gpio::{Level, Output};
 use {defmt_rtt as _, panic_probe as _};
+
+mod nmea;
+mod math;
 
 // Program metadata for `picotool info`.
 // This isn't needed, but it's recomended to have these minimal entries.
@@ -30,15 +35,19 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
-    let mut uart = Uart::new_blocking(
-        p.UART0,
-        p.PIN_0,
-        p.PIN_1,
-        Default::default(),
-    );
 
-    let mut data = Vec::<u8, 4096>::new();
+    let data = Vec::<String<128>, 64>::new();
 
-    let lines = data.split(b'\n');
-    
+    nmea::parse_burst(data);
+
+    let x = [0.1, 0.2, 0.3];
+    let y = [0.4, 0.5, 0.6];
+    let frequencies = [1.0, 2.0, 3.0];
+    let mut power_out = [0.0; 3];
+
+    math::lombscargle_no_std(&x, &y, &frequencies, &mut power_out);
+
+    let mut chsum = fletcher::Fletcher64::new();
+    chsum.update(&[1, 2, 3, 4, 5]);
+    let _ = chsum.value();
 }
