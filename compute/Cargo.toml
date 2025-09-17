@@ -1,10 +1,7 @@
 [package]
-name = "realtime-gnssrefl"
+name = "compute"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-csv = "1.3.1"
-polyfit-rs = "0.2.1"
-rayon = "1.11.0"
-#rppal = "0.22.1"
+rppal = "0.22.1"
