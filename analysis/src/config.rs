@@ -11,13 +11,13 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            min_elevation: 1.0,
-            max_elevation: 30.0,
+            min_elevation: 5.0,
+            max_elevation: 90.0,
             min_azimuth: 0.0,
             max_azimuth: 360.0,
             min_height: 1.0,
-            max_height: 20.0,
-            step_size: 0.05,
+            max_height: 8.0,
+            step_size: 0.01,
         }
     }
 }

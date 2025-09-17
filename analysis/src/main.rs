@@ -128,7 +128,7 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea4.txt");
+    let nmea_sentences = read_nmea_file("data/nmea5.txt");
     let records = parse_nmea(nmea_sentences, &config);
 
     println!("Parsed {} records from NMEA sentences.", records.len());
@@ -155,22 +155,22 @@ fn main() {
     
     process_arcs(&arcs, &mut record_db.records);
 
-    // let mut wtr = start_csv("results/records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
-    // for record in &record_db.records {
-    //     write_to_csv(
-    //         &mut wtr,
-    //         &[
-    //             record.id.to_string(),
-    //             record.time.to_string(),
-    //             format!("{:?}", record.network),
-    //             format!("{:?}", record.band),
-    //             record.elevation.to_string(),
-    //             record.azimuth.to_string(),
-    //             record.snr.to_string(),
-    //         ],
-    //     );
-    // }
-    // flush_csv(&mut wtr);
+    let mut wtr = start_csv("results/records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
+    for record in &record_db.records {
+        write_to_csv(
+            &mut wtr,
+            &[
+                record.id.to_string(),
+                record.time.to_string(),
+                format!("{:?}", record.network),
+                format!("{:?}", record.band),
+                record.elevation.to_string(),
+                record.azimuth.to_string(),
+                record.snr.to_string(),
+            ],
+        );
+    }
+    flush_csv(&mut wtr);
 
     find_results(&arcs, &record_db.records, &config);
     println!("Total runtime: {:?}", start.elapsed());

@@ -39,7 +39,10 @@ pub fn find_arcs(records: &VecDeque<Record>) -> Vec<Arc> {
                 // finalize previous arc
                 let arc_indices = std::mem::take(&mut current_arc_indices);
                 println!("Adding arc for ID {}: {} records from {} to {}", id, arc_indices.len(), arc_start_time, last_time);
-                arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
+                // if arc_indices.len() > 300 {
+                    arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
+                //}
+                
 
                 // start next arc
                 current_arc_indices.push(i);
@@ -55,7 +58,9 @@ pub fn find_arcs(records: &VecDeque<Record>) -> Vec<Arc> {
         if !current_arc_indices.is_empty() {
             let arc_indices = std::mem::take(&mut current_arc_indices);
             println!("Finalizing arc for ID {}: {} records from {} to {}", id, arc_indices.len(), arc_start_time, last_time);
-            arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
+            // if arc_indices.len() > 500 {
+                arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
+            // }
         }
     }
 
@@ -79,7 +84,7 @@ pub fn fix_arc_elev_azim(arc: &Arc, records: &mut VecDeque<Record>) {
 
     // Fit 3rd order polynomials
     let elev_poly = polyfit(&times, &elevs, 3).unwrap_or(vec![0.0; 4]);
-    let azim_poly = polyfit(&times, &azims, 3).unwrap_or(vec![0.0; 4]);
+    let azim_poly = polyfit(&times, &azims,3).unwrap_or(vec![0.0; 4]);
 
     // Helper to evaluate polynomial
     fn eval_poly(coeffs: &[f64], x: f64) -> f64 {
