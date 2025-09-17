@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::db::record::Record;
+use crate::db::record::{Band, Network, Record};
 use crate::db::arc::{Arc};
 use crate::config::Config;
 use crate::math::lombscargle;
@@ -134,6 +134,39 @@ pub fn lin_range(start: f64, stop: f64, step_size: f64) -> Vec<f64> {
     values
 }
 
+pub fn network_band_to_frequency(network: Network, band: Band) -> Option<f64> {
+    match network {
+        Network::GPS => {
+            return match band {
+                Band::L1 => Some(1575.42e6),
+                Band::L5 => Some(1176.45e6),
+                _ => None,
+            }
+        },
+        Network::GLONASS => {
+            return match band {
+                Band::L1 => Some(1602.00e6),
+                _ => None,
+            }
+        },
+        Network::Galileo => {
+            return match band {
+                Band::L1 => Some(1575.42e6),
+                Band::L5 => Some(1176.45e6),
+                _ => None,
+            }
+        },
+        Network::BeiDou => {
+            return match band {
+                Band::L1 => Some(1561.098e6),
+                Band::L5 => Some(1176.45e6),
+                _ => None,
+            }
+        },
+        Network::Unknown => None,
+    }
+}
+
 pub fn find_arc_frequencies(arc: &Arc, records: &VecDeque<Record>, config: &Config) -> Vec<(f64, f64)> {
     let n = arc.record_indices.len();
     if n < 3 {
@@ -142,7 +175,16 @@ pub fn find_arc_frequencies(arc: &Arc, records: &VecDeque<Record>, config: &Conf
     }
     let steps = lin_range(config.min_height, config.max_height, config.step_size);
 
-    let l1_wv_m = 299_792_458.0 / (1575.42e6); // L1 wavelength (m)
+    let first_record = records.get(arc.record_indices[0]).unwrap();
+    let (network, band) = (first_record.network, first_record.band);
+    let freq = match network_band_to_frequency(network, band) {
+        Some(f) => f,
+        None => {
+            eprintln!("Arc {}: unknown frequency for network {:?} band {:?}, skipping.", arc.sat_id, network, band);
+            return Vec::new();
+        }
+    };
+    let l1_wv_m = 299_792_458.0 / freq;
     let cf = l1_wv_m / 2.0;
 
     let arc_records: Vec<&Record> = arc.record_indices.iter().filter_map(|&idx| records.get(idx)).collect();
