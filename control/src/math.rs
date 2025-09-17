@@ -123,3 +123,183 @@ pub fn lombscargle_no_std(
 
     m
 }
+
+/// Solve A x = b in-place via Gaussian elimination with partial pivoting.
+/// - `a` is an NxN matrix (only top-left n×n is used)
+/// - `b` is length N (only first n used)
+/// Returns `true` on success, `false` if a near-singular pivot is found.
+fn gauss_solve<const N: usize>(a: &mut [[f64; N]; N], b: &mut [f64; N], n: usize) -> bool {
+    const EPS: f64 = 1e-12;
+
+    // Forward elimination
+    for k in 0..n {
+        // pivot row r with max |a[r][k]|
+        let mut r = k;
+        let mut maxv = a[k][k].abs();
+        for i in (k + 1)..n {
+            let v = a[i][k].abs();
+            if v > maxv {
+                maxv = v;
+                r = i;
+            }
+        }
+        if maxv < EPS {
+            return false; // singular/ill-conditioned
+        }
+        if r != k {
+            // swap rows k <-> r
+            for j in k..n {
+                let tmp = a[k][j];
+                a[k][j] = a[r][j];
+                a[r][j] = tmp;
+            }
+            let tb = b[k];
+            b[k] = b[r];
+            b[r] = tb;
+        }
+
+        // eliminate
+        let pivot = a[k][k];
+        for i in (k + 1)..n {
+            let f = a[i][k] / pivot;
+            // subtract f * row k from row i
+            for j in (k + 1)..n {
+                a[i][j] -= f * a[k][j];
+            }
+            a[i][k] = 0.0;
+            b[i] -= f * b[k];
+        }
+    }
+
+    // Back substitution
+    for i in (0..n).rev() {
+        let mut s = b[i];
+        for j in (i + 1)..n {
+            s -= a[i][j] * b[j];
+        }
+        let piv = a[i][i];
+        if piv.abs() < EPS {
+            return false;
+        }
+        b[i] = s / piv;
+    }
+    true
+}
+
+const DEG: usize = 3; // polynomial degree for polyfit_and_smooth_no_std
+
+/// Fit a polynomial of degree `DEG` to (x,y) via least squares and overwrite `y` with
+/// the fitted values at each `x[i]`.
+///
+/// - `DEG` is the (compile-time) polynomial degree (e.g., 1=line, 2=quadratic).
+/// - Works in `no_std`, single-core, no allocation.
+/// - Non-finite (x,y) pairs are **ignored** during fitting.
+/// - On write-back, only entries with finite `x[i]` are updated; others are left unchanged.
+/// - If there are fewer than `DEG+1` valid points, it automatically downgrades to
+///   `effective_deg = valid_points-1`.
+///
+/// Returns the degree actually used (effective degree).
+pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
+    debug_assert_eq!(x.len(), y.len());
+    let n_pts = x.len();
+
+    // Count valid pairs and collect power sums up to 2*DEG without pow()
+    // s[k] = sum t^k  for k=0..2*DEG
+    // b[i] = sum y * t^i for i=0..DEG
+    let mut valid = 0usize;
+
+    // Use only the needed lengths; cap degree by the number of valid pairs (later).
+    let mut s: [f64; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
+    let mut cs: [f64; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
+    let mut bt: [f64; DEG + 1] = [0.0; DEG + 1];
+    let mut cbt: [f64; DEG + 1] = [0.0; DEG + 1];
+
+    for (&xi, &yi) in x.iter().zip(y.iter()) {
+        if !(xi.is_finite() && yi.is_finite()) {
+            continue;
+        }
+        valid += 1;
+
+        // iteratively build powers of xi
+        let mut p = 1.0_f64;
+        for k in 0..(2 * DEG + 1) {
+            kahan_add(&mut s[k], &mut cs[k], p);
+            p *= xi;
+        }
+
+        // reset p and accumulate y * xi^i
+        let mut p2 = 1.0_f64;
+        for i in 0..(DEG + 1) {
+            kahan_add(&mut bt[i], &mut cbt[i], yi * p2);
+            p2 *= xi;
+        }
+    }
+
+    if valid == 0 {
+        // nothing to fit; leave y unchanged and report 0-degree used
+        return 0;
+    }
+
+    // Effective degree cannot exceed valid-1
+    let mut eff_deg = DEG.min(valid.saturating_sub(1));
+    // Safety: cap at array limits (already ensured by consts), but handle degenerate sums
+    if eff_deg == 0 {
+        // Constant fit: a0 = mean(y on valid)
+        let a0 = bt[0] / (s[0].max(1.0));
+        for (xi, yi) in x.iter().zip(y.iter_mut()) {
+            if xi.is_finite() {
+                *yi = a0;
+            }
+        }
+        return 0;
+    }
+
+    let n = eff_deg + 1;
+
+    // Build normal-equations matrix A and rhs b for size n
+    // A[i][j] = sum x^(i+j) = s[i+j],  b[i] = sum y x^i = bt[i]
+    let mut a: [[f64; DEG + 1]; DEG + 1] = [[0.0; DEG + 1]; DEG + 1];
+    let mut bvec: [f64; DEG + 1] = [0.0; DEG + 1];
+
+    for i in 0..n {
+        bvec[i] = bt[i];
+        for j in 0..n {
+            a[i][j] = s[i + j];
+        }
+    }
+
+    // Solve for coefficients in-place (solution written into bvec[0..n])
+    let ok = gauss_solve::<{ DEG + 1 }>(&mut a, &mut bvec, n);
+    if !ok {
+        // fall back: constant fit to mean of y over valid samples
+        let a0 = bt[0] / (s[0].max(1.0));
+        for (xi, yi) in x.iter().zip(y.iter_mut()) {
+            if xi.is_finite() {
+                *yi = a0;
+            }
+        }
+        return 0;
+    }
+
+    // Evaluate fitted polynomial at each x and overwrite y
+    for (xi, yi) in x.iter().zip(y.iter_mut()) {
+        if !xi.is_finite() {
+            continue;
+        }
+        // Horner's method
+        let mut acc = bvec[n - 1];
+        for k in (0..(n - 1)).rev() {
+            acc = acc * *xi + bvec[k];
+        }
+        *yi = acc;
+    }
+
+    eff_deg
+}
+
+/* -------------------------
+   Optional: f32 variant
+   -------------------------
+   Switch types to f32, constants to f32, and adjust EPS in gauss_solve
+   if you want better speed on RP2040 (no FPU).
+*/

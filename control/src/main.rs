@@ -41,11 +41,13 @@ async fn main(_spawner: Spawner) {
     nmea::parse_burst(data);
 
     let x = [0.1, 0.2, 0.3];
-    let y = [0.4, 0.5, 0.6];
+    let mut y = [0.4, 0.5, 0.6];
     let frequencies = [1.0, 2.0, 3.0];
     let mut power_out = [0.0; 3];
 
     math::lombscargle_no_std(&x, &y, &frequencies, &mut power_out);
+
+    math::polyfit_and_smooth_no_std(&x, &mut y);
 
     let mut chsum = fletcher::Fletcher64::new();
     chsum.update(&[1, 2, 3, 4, 5]);
