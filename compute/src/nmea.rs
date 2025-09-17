@@ -1,11 +1,12 @@
-use crate::db::record::Record;
+use crate::db::record::{Band, Network, Record};
 use crate::config::Config;
 
 pub fn nmea_to_records(nmea_sentences: Vec<String>, config: &Config) -> Vec<Record> {
     let mut records = Vec::with_capacity(nmea_sentences.len() * 2); // NOTE: rough optimization
-    let mut current_gps_time = 0;
+    let mut current_gps_time = i64::MAX;
 
     for sentence in nmea_sentences {
+        // println!("Processing NMEA sentence: {}", sentence);
         if let Some(t) = find_gga_time(&sentence) {
             current_gps_time = t;
         }
@@ -16,18 +17,26 @@ pub fn nmea_to_records(nmea_sentences: Vec<String>, config: &Config) -> Vec<Reco
     records
 }
 
-fn header_to_number(header: &str) -> Option<u32> {
+fn command_to_network(header: &str) -> Option<Network> {
     if header.len() < 3 {
         return None;
     }
-    let header_num = match &header[1..3] {
-        "GP" => 1000,
-        "GA" => 2000,
-        "BD" => 3000,
-        "GL" => 4000,
-        _ => return None,
+    let network = match &header[1..3] {
+        "GP" => Network::GPS,
+        "GA" => Network::Galileo,
+        "GB" => Network::BeiDou,
+        "GL" => Network::GLONASS,
+        _ => Network::Unknown,
     };
-    Some(header_num)
+    Some(network)
+}
+
+fn number_to_band(num: u32) -> Band {
+    match num {
+        1 => Band::L1,
+        8 => Band::L5,
+        _ => Band::Unknown,
+    }
 }
 
 fn is_valid_nmea_sentence(sentence: &str) -> bool {
@@ -78,14 +87,16 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
         _ => return,
     };
 
-    let header_num = match header_to_number(header) {
-        Some(num) => num,
+    let network = match command_to_network(header) {
+        Some(network) => network,
         None => return,
     };
 
     // Add band from signal id, as part of id
 
     let (_, _, _) = (it.next(), it.next(), it.next()); // NOTE: Skip total messages, msg number, total sats
+
+    let mut new_records = vec![];
 
     loop {
         let id_str = match it.next() { Some(v) if !v.is_empty() => v, _ => break };
@@ -122,6 +133,8 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
             Err(_) => continue,
         };
 
+        println!("Parsed Record - ID: {}, Network: {}, Elevation: {}, Azimuth: {}, SNR: {}, Time: {}", id, format!("{:?}", network), elevation, azimuth, snr, current_gps_time);
+
         if elevation < config.min_elevation || elevation > config.max_elevation {
             continue;
         }
@@ -130,12 +143,27 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
             continue;
         }
 
-        records.push(Record {
-            id: header_num + id,
+        new_records.push(Record {
+            id,
             elevation,
             azimuth,
             snr,
             time: current_gps_time,
+            network,
+            band: Band::Unknown,
         });
     }
+
+    let band_str = match it.next() { Some(v) if !v.is_empty() => v, _ => return };
+    let band_num = match band_str.parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let band = number_to_band(band_num);
+
+    for record in new_records.iter_mut() {
+        record.band = band;
+    }
+
+    records.extend(new_records);
 }

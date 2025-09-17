@@ -1,5 +1,22 @@
 use std::collections::VecDeque;
 
+
+#[derive(Debug, Clone, Copy)]
+pub enum Network {
+    GPS,
+    Galileo,
+    BeiDou,
+    GLONASS,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Band {
+    L1,
+    L5,
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct Record {
     pub id: u32,
@@ -7,6 +24,8 @@ pub struct Record {
     pub azimuth: f64,
     pub snr: f64,
     pub time: i64,
+    pub network: Network,
+    pub band: Band,
 }
 
 pub struct RecordDatabase {
