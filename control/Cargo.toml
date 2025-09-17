@@ -21,4 +21,5 @@ embassy-rp = { version = "0.8.0", features = [
   "binary-info",
 ] }
 embassy-time = "0.5.0"
+heapless = "0.9.1"
 panic-probe = "1.0.0"
