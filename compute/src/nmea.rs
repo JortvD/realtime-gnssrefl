@@ -31,9 +31,19 @@ fn command_to_network(header: &str) -> Option<Network> {
     Some(network)
 }
 
+fn correct_sattelite_id(satellite: u32, network: Network) -> u32 {
+    match network {
+        Network::GLONASS => satellite - 64,
+        Network::GPS => if satellite > 192 { satellite - 128 } else { satellite },
+        _ => satellite,
+    }
+}
+
 fn number_to_band(num: u32) -> Band {
     match num {
         1 => Band::L1,
+        5 => Band::L5,
+        7 => Band::L5,
         8 => Band::L5,
         _ => Band::Unknown,
     }
@@ -94,14 +104,36 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
 
     // Add band from signal id, as part of id
 
-    let (_, _, _) = (it.next(), it.next(), it.next()); // NOTE: Skip total messages, msg number, total sats
+    let num_messages_str = match it.next() { Some(v) => v, _ => return };
+    let num_messages = match num_messages_str.parse::<usize>() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
 
-    let mut new_records = vec![];
+    let idx_of_message_str = match it.next() { Some(v) => v, _ => return };
+    let idx_of_message = match idx_of_message_str.parse::<usize>() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
 
-    loop {
-        let id_str = match it.next() { Some(v) if !v.is_empty() => v, _ => break };
+    let num_satellites_str = match it.next() { Some(v) => v, _ => return };
+    let num_satellites = match num_satellites_str.parse::<usize>() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
 
-        let id = match id_str.parse::<u32>() {
+    let num_records = if idx_of_message == num_messages {
+        num_satellites - (num_messages - 1) * 4
+    } else {
+        4
+    };
+
+    let mut new_records = Vec::with_capacity(4);
+
+    for _ in 0..num_records {
+        let satellite_str = match it.next() { Some(v) if !v.is_empty() => v, _ => break };
+
+        let satellite = match satellite_str.parse::<u32>() {
             Ok(v) => v,
             Err(_) => {
                 it.next(); it.next(); it.next();
@@ -133,8 +165,6 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
             Err(_) => continue,
         };
 
-        println!("Parsed Record - ID: {}, Network: {}, Elevation: {}, Azimuth: {}, SNR: {}, Time: {}", id, format!("{:?}", network), elevation, azimuth, snr, current_gps_time);
-
         if elevation < config.min_elevation || elevation > config.max_elevation {
             continue;
         }
@@ -144,7 +174,8 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
         }
 
         new_records.push(Record {
-            id,
+            id: 0,
+            satellite: correct_sattelite_id(satellite, network),
             elevation,
             azimuth,
             snr,
@@ -163,7 +194,7 @@ fn find_gsv_records_into(sentence: String, current_gps_time: i64, config: &Confi
 
     for record in new_records.iter_mut() {
         record.band = band;
+        record.id = (record.network as u32 + 1) * 10000 + (record.band as u32) * 1000 + record.satellite;
+        records.push(record.clone());
     }
-
-    records.extend(new_records);
 }

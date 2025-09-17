@@ -20,6 +20,7 @@ pub enum Band {
 #[derive(Debug, Clone)]
 pub struct Record {
     pub id: u32,
+    pub satellite: u32,
     pub elevation: f64,
     pub azimuth: f64,
     pub snr: f64,

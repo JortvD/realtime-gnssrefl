@@ -119,7 +119,7 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea3.txt");
+    let nmea_sentences = read_nmea_file("data/nmea2.txt");
     let records = parse_nmea(nmea_sentences, &config);
     // let mut uart = Uart::with_path("/dev/ttyAMA0", 115_200, Parity::None, 8, 1).expect("Failed to open UART");
     // uart.set_read_mode(1, Duration::from_millis(0)).expect("Failed to set read mode");
@@ -153,31 +153,42 @@ fn main() {
 
     record_db.insert_many(records);
 
-    for record in &record_db.records {
-        println!("Record - ID: {}, Elevation: {}, Azimuth: {}, SNR: {}, Time: {}", record.id, record.elevation, record.azimuth, record.snr, record.time);
-    }
+    // for record in &record_db.records {
+    //     println!(
+    //         "Record - ID: {:05}, Network: {:1}, Band: {:1}, Elevation: {:>2}, Azimuth: {:>3}, SNR: {:>2}, Time: {:>5}",
+    //         record.id,
+    //         record.network as u32,
+    //         record.band as u32,
+    //         record.elevation,
+    //         record.azimuth,
+    //         record.snr,
+    //         record.time
+    //     );
+    // }
 
-    // println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
+    println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
     
     // let arcs = find_arcs(&record_db.records);
     // println!("Found {} arcs in the records.", arcs.len());
     
     // process_arcs(&arcs, &mut record_db.records);
 
-    // let mut wtr = start_csv("records.csv", &["time", "id", "elevation", "azimuth", "snr"]);
-    // for record in &record_db.records {
-    //     write_to_csv(
-    //         &mut wtr,
-    //         &[
-    //             record.time.to_string(),
-    //             record.id.to_string(),
-    //             record.elevation.to_string(),
-    //             record.azimuth.to_string(),
-    //             record.snr.to_string(),
-    //         ],
-    //     );
-    // }
-    // flush_csv(&mut wtr);
+    let mut wtr = start_csv("records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
+    for record in &record_db.records {
+        write_to_csv(
+            &mut wtr,
+            &[
+                record.id.to_string(),
+                record.time.to_string(),
+                format!("{:?}", record.network),
+                format!("{:?}", record.band),
+                record.elevation.to_string(),
+                record.azimuth.to_string(),
+                record.snr.to_string(),
+            ],
+        );
+    }
+    flush_csv(&mut wtr);
 
     // find_results(&arcs, &record_db.records, &config);
     // println!("Total runtime: {:?}", start.elapsed());
