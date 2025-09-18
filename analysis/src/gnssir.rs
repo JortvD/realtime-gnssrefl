@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
-use crate::{math::lombscargle, types::{Arc, Config, Record}};
+use crate::db::record::{Record, Network, Band};
+use crate::db::arc::{Arc};
+use crate::config::Config;
+use crate::math::lombscargle;
 
-pub fn find_arcs(records: &Vec<Record>) -> Vec<Arc> {
+pub fn find_arcs(records: &VecDeque<Record>) -> Vec<Arc> {
     let n_records = records.len();
     if n_records == 0 {
         return Vec::new();
@@ -36,12 +39,7 @@ pub fn find_arcs(records: &Vec<Record>) -> Vec<Arc> {
                 // finalize previous arc
                 let arc_indices = std::mem::take(&mut current_arc_indices);
                 println!("Adding arc for ID {}: {} records from {} to {}", id, arc_indices.len(), arc_start_time, last_time);
-                arcs.push(Arc {
-                    sat_id: id,
-                    time_start: arc_start_time,
-                    time_end: last_time,
-                    record_indices: arc_indices
-                });
+                arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
 
                 // start next arc
                 current_arc_indices.push(i);
@@ -57,12 +55,7 @@ pub fn find_arcs(records: &Vec<Record>) -> Vec<Arc> {
         if !current_arc_indices.is_empty() {
             let arc_indices = std::mem::take(&mut current_arc_indices);
             println!("Finalizing arc for ID {}: {} records from {} to {}", id, arc_indices.len(), arc_start_time, last_time);
-            arcs.push(Arc {
-                sat_id: id,
-                time_start: arc_start_time,
-                time_end: last_time,
-                record_indices: arc_indices
-            });
+            arcs.push(Arc::new(id, arc_start_time, last_time, arc_indices));
         }
     }
 
@@ -71,7 +64,7 @@ pub fn find_arcs(records: &Vec<Record>) -> Vec<Arc> {
 
 use polyfit_rs::polyfit_rs::polyfit;
 
-pub fn fix_arc_elev_azim(arc: &Arc, records: &mut Vec<Record>) {
+pub fn fix_arc_elev_azim(arc: &Arc, records: &mut VecDeque<Record>) {
     let mut times = Vec::with_capacity(arc.record_indices.len());
     let mut elevs = Vec::with_capacity(arc.record_indices.len());
     let mut azims = Vec::with_capacity(arc.record_indices.len());
@@ -105,7 +98,7 @@ pub fn fix_arc_elev_azim(arc: &Arc, records: &mut Vec<Record>) {
     }
 }
 
-pub fn correct_arc_snr(arc: &Arc, records: &mut Vec<Record>) {
+pub fn correct_arc_snr(arc: &Arc, records: &mut VecDeque<Record>) {
     // Collect SNR values for the arc's records
     // let snr_values: Vec<f64> = arc
     //     .record_indices
@@ -141,7 +134,7 @@ pub fn lin_range(start: f64, stop: f64, step_size: f64) -> Vec<f64> {
     values
 }
 
-pub fn find_arc_rh(arc: &Arc, records: &Vec<Record>, config: &Config) -> Vec<(f64, f64)> {
+pub fn find_arc_frequencies(arc: &Arc, records: &VecDeque<Record>, config: &Config) -> Vec<(f64, f64)> {
     let n = arc.record_indices.len();
     if n < 3 {
         eprintln!("Arc {}: too few points (n={}), skipping.", arc.sat_id, n);
@@ -169,6 +162,6 @@ pub fn find_arc_rh(arc: &Arc, records: &Vec<Record>, config: &Config) -> Vec<(f6
     steps.into_iter().zip(power.into_iter()).collect()
 }
 
-pub fn find_max_amplitude(rhs: &Vec<(f64, f64)>) -> Option<(f64, f64)> {
-    rhs.iter().cloned().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+pub fn find_max_amplitude_frequency(frequencies: &Vec<(f64, f64)>) -> Option<(f64, f64)> {
+    frequencies.iter().cloned().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
 }

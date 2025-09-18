@@ -1,161 +1,122 @@
-use std::{time::Duration};
-
-// use csv::Writer;
 use rppal::uart::{Parity, Uart};
-use rppal::gpio::Gpio;
-use std::thread::sleep;
+use std::time::Duration;
 
-// mod db;
-// mod nmea;
-// mod config;
-// mod gnssir;
-// mod math;
+use crate::types::{Config, Record};
 
-// fn read_nmea_file(file_path: &str) -> Vec<String> {
-//     let start = std::time::Instant::now();
-//     let lines = std::fs::read_to_string(file_path)
-//         .expect("Failed to read NMEA file")
-//         .lines()
-//         .map(|line| line.to_string())
-//         .collect::<Vec<String>>();
-//     println!("Reading NMEA file took: {:?}", start.elapsed());
-//     lines
-// }
+mod types;
+mod unpack;
+mod math;
+mod gnssir;
 
-// fn parse_nmea(nmea_sentences: Vec<String>, config: &config::Config) -> Vec<db::record::Record> {
-//     let start = std::time::Instant::now();
-//     let records = nmea::nmea_to_records(nmea_sentences, config);
-//     println!("NMEA parsing took: {:?}", start.elapsed());
-//     records
-// }
-
-// fn find_arcs(records: &VecDeque<db::record::Record>) -> Vec<db::arc::Arc> {
-//     let start = std::time::Instant::now();
-//     let arcs = gnssir::find_arcs(records);
-//     println!("Finding arcs took: {:?}", start.elapsed());
-//     arcs
-// }
-
-// fn process_arcs(arcs: &Vec<db::arc::Arc>, records: &mut VecDeque<db::record::Record>) {
-//     let start = std::time::Instant::now();
-//     for arc in arcs {
-//         gnssir::fix_arc_elev_azim(arc, records);
-//     }
-//     println!("Fixing arc elevation and azimuth took: {:?}", start.elapsed());
-//     let start = std::time::Instant::now();
-//     for arc in arcs {
-//         gnssir::correct_arc_snr(arc, records);
-//     }
-//     println!("Correcting arc SNR took: {:?}", start.elapsed());
-// }
-
-// fn start_csv(file_path: &str, headers: &[&str]) -> Writer<std::fs::File> {
-//     let mut wtr = Writer::from_path(file_path).expect("Failed to create CSV file");
-//     wtr.write_record(headers).expect("Failed to write header");
-//     wtr
-// }
-
-// fn write_to_csv(wtr: &mut Writer<std::fs::File>, record: &[String]) {
-//     wtr.write_record(record).expect("Failed to write record");
-// }
-
-// fn flush_csv(wtr: &mut Writer<std::fs::File>) {
-//     wtr.flush().expect("Failed to flush CSV writer");
-// }
-
-// fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>, config: &config::Config) {
-//     let mut wtr = start_csv("arc_freqs.csv", &["i", "id", "frequency", "amplitude", "num"]);
-
-//     let mut freqs: Vec<Vec<(f64, f64)>> = Vec::new();
-
-//     let start = std::time::Instant::now();
-//     for id in 0..arcs.len() {
-//         let arc = &arcs[id];
-//         let start2 = std::time::Instant::now();
-//         let frequencies = gnssir::find_arc_frequencies(arc, records, &config);
-//         let duration2 = start2.elapsed();
-//         println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
-
-//         for (freq, amp) in &frequencies {
-//             write_to_csv(&mut wtr, &[id.to_string(), arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
-//         }
-//         freqs.push(frequencies);
-//     }
-//     println!("Frequency analysis took: {:?}", start.elapsed());
-
-//     flush_csv(&mut wtr);
-
-//     let start = std::time::Instant::now();
-    
-//     for (arc, frequencies) in arcs.iter().zip(freqs.iter()) {
-//         if let Some((freq, amp)) = gnssir::find_max_amplitude_frequency(frequencies) {
-//             let mean_elev = arc.record_indices.iter()
-//                 .filter_map(|&idx| records.get(idx).map(|rec| rec.elevation))
-//                 .sum::<f64>() / arc.record_indices.len() as f64;
-//             let mean_azim = arc.record_indices.iter()
-//                 .filter_map(|&idx| records.get(idx).map(|rec| rec.azimuth))
-//                 .sum::<f64>() / arc.record_indices.len() as f64;
-//             let mean_ampl = frequencies.iter().map(|(_,a)| *a).sum::<f64>() / frequencies.len() as f64;
-//             let median_time = {
-//                 let mut times: Vec<i64> = arc.record_indices.iter()
-//                     .filter_map(|&idx| records.get(idx).map(|rec| rec.time))
-//                     .collect();
-//                 times.sort();
-//                 times[times.len() / 2]
-//             };
-
-//             println!("Arc ID {}: Max amplitude frequency {:.4} with amplitude {:.4} (mean: {:.4}) at mean elev {:.2}, azim {:.2}, median time {}, num records {}",
-//                 arc.sat_id, freq, amp, mean_ampl, mean_elev, mean_azim, median_time, arc.record_indices.len());
-//         }
-//     }
-//     println!("Collecting results took: {:?}", start.elapsed());
-// }
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            min_elevation: 1.0,
+            max_elevation: 10.0,
+            min_azimuth: 0.0,
+            max_azimuth: 360.0,
+            min_height: 5.0,
+            max_height: 30.0,
+            step_size: 0.05,
+        }
+    }
+}
 
 fn main() {
-    // let start: std::time::Instant = std::time::Instant::now();
-    // let config: config::Config = config::Config::default();
-    // let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
-
-    // let nmea_sentences = read_nmea_file("data/nmea.txt");
-    // let records = parse_nmea(nmea_sentences, &config);
     let mut uart = Uart::with_path("/dev/ttyAMA0", 115_200, Parity::None, 8, 1).expect("Failed to open UART");
-    uart.set_read_mode(1, Duration::from_millis(0)).expect("Failed to set read mode");
+    uart.set_read_mode(1, Duration::from_millis(100)).expect("Failed to set read mode");
 
-    loop {
-        let mut buffer = [0u8; 1024];
-        // println!("Reading from UART...");
-        match uart.read(&mut buffer) {
-            Ok(bytes_read) if bytes_read > 0 => {
-                let data = &buffer[..bytes_read];
-                if let Ok(text) = std::str::from_utf8(data) {
-                    print!("{}", text);
-                } else {
-                    println!("{:?}", data);
-                }
-            }
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("UART read error: {:?}", e);
-            }
+    // Indicate ready to receive data
+    uart.write("GO\r\n".as_bytes()).expect("Failed to write to UART");
+
+    // Start receiving data
+    let mut buffer = [0u8; 1024 * 1024 * 4];
+    let mut bytes_read = 0;
+
+    match uart.read(&mut buffer) {
+        Ok(b) if b > 0 => {
+            bytes_read += b;
+            println!("Read {} bytes", b);
+        }
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("UART read error: {:?}", e);
         }
     }
 
-    // uart.send_start().expect("Failed to send start command");
-    // let mut buffer = [0u8; 1024];
-    // uart.read(&mut buffer).expect("Failed to read from UART");
+    let mut u32_buffer = Vec::with_capacity(bytes_read / 4);
+    for chunk in buffer[..bytes_read].chunks(4) {
+        let mut arr = [0u8; 4];
+        for (i, &b) in chunk.iter().enumerate() {
+            arr[i] = b;
+        }
+        u32_buffer.push(u32::from_le_bytes(arr));
+    }
 
-    // let records = Vec::new();
+    let original_chsum = (u32_buffer.pop().expect("No checksum found") as u64) << 32 | (u32_buffer.pop().expect("No checksum found") as u64);
+    let chsum = fletcher::calc_fletcher64(&u32_buffer);
 
-    // println!("Parsed {} records from NMEA sentences.", records.len());
+    if chsum != original_chsum {
+        eprintln!("Checksum mismatch: calculated {:08X}, expected {:08X}", chsum, original_chsum);
+        return;
+    }
 
-    // record_db.insert_many(records);
+    let config = Config::default();
+    let mut records: Vec<Record> = unpack::unpack(u32_buffer, &config);
+    println!("Unpacked {} records", records.len());
 
-    // println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
-    
-    // let arcs = find_arcs(&record_db.records);
-    // println!("Found {} arcs in the records.", arcs.len());
-    
-    // process_arcs(&arcs, &mut record_db.records);
-    // find_results(&arcs, &record_db.records, &config);
-    // println!("Total runtime: {:?}", start.elapsed());
+    let arcs = gnssir::find_arcs(&records);
+    let mut best_rhs = Vec::new();
+
+    for arc in &arcs {
+        println!("Arc ID {}: {} records from {} to {}", arc.sat_id, arc.record_indices.len(), arc.time_start, arc.time_end);
+        gnssir::fix_arc_elev_azim(arc, &mut records);
+        gnssir::correct_arc_snr(arc, &mut records);
+        let rhs = gnssir::find_arc_rh(arc, &records, &config);
+        let (rh, amp) = match gnssir::find_max_amplitude(&rhs) {
+            Some((r, a)) => (r, a),
+            None => {
+                println!("  No frequency components found.");
+                continue;
+            }
+        };
+        println!("  Max relative height: {:.4} m with amplitude {:.4} volts/volts", rh, amp);
+        best_rhs.push(rh);
+    }
+
+    // Remove outliers from best_rhs using IQR
+    fn remove_outliers_iqr(data: &mut Vec<f64>) {
+        if data.len() < 4 {
+            return;
+        }
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let q1_idx = data.len() / 4;
+        let q3_idx = 3 * data.len() / 4;
+        let q1 = data[q1_idx];
+        let q3 = data[q3_idx];
+        let iqr = q3 - q1;
+        let lower = q1 - 1.5 * iqr;
+        let upper = q3 + 1.5 * iqr;
+        data.retain(|&x| x >= lower && x <= upper);
+    }
+
+    let n_before = best_rhs.len();
+    remove_outliers_iqr(&mut best_rhs);
+    let n_after = best_rhs.len();
+    println!("Removed {} outliers", n_before - n_after);
+
+    let mean_rh = if !best_rhs.is_empty() {
+        best_rhs.iter().sum::<f64>() / best_rhs.len() as f64
+    } else {
+        0.0
+    };
+    let stddev_rh = if best_rhs.len() > 1 {
+        let mean = mean_rh;
+        (best_rhs.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (best_rhs.len() as f64 - 1.0)).sqrt()
+    } else {
+        0.0
+    };
+
+    uart.write(format!("{:2.3},{:2.3},{:3}\r\n", mean_rh, stddev_rh, n_after).as_bytes()).expect("Failed to write to UART");
+
 }
