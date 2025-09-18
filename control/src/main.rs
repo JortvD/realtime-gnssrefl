@@ -5,11 +5,15 @@
 #![no_std]
 #![no_main]
 
+use core::str::Split;
+
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::gpio;
+use heapless::{String, Vec};
 use embassy_rp::uart;
 use embassy_time::Timer;
+use embassy_rp::uart::{Uart, Config};
 use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
@@ -17,6 +21,9 @@ use embassy_rp::peripherals::UART0;
 use heapless::{Vec, String};
 
 use {defmt_rtt as _, panic_probe as _};
+
+mod nmea;
+mod math;
 
 const MAX_LINES: usize = 100;
 const LINE_LEN: usize = 256;
@@ -47,6 +54,22 @@ async fn main(spawner: Spawner) {
     // Init peripherals
     let p = embassy_rp::init(Default::default());
 
+    let data = Vec::<String<128>, 64>::new();
+
+    nmea::parse_burst(data);
+
+    let x = [0.1, 0.2, 0.3];
+    let mut y = [0.4, 0.5, 0.6];
+    let frequencies = [1.0, 2.0, 3.0];
+    let mut power_out = [0.0; 3];
+
+    math::lombscargle_no_std(&x, &y, &frequencies, &mut power_out);
+
+    math::polyfit_and_smooth_no_std(&x, &mut y);
+
+    let mut chsum = fletcher::Fletcher64::new();
+    chsum.update(&[1, 2, 3, 4, 5]);
+    let _ = chsum.value();
     // GPIOS
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 

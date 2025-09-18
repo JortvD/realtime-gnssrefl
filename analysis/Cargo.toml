@@ -1,10 +1,9 @@
 [package]
-name = "compute"
+name = "realtime-gnssrefl"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-fletcher = "1.0.0"
+csv = "1.3.1"
 polyfit-rs = "0.2.1"
 rayon = "1.11.0"
-rppal = "0.22.1"
