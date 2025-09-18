@@ -5,12 +5,9 @@
 #![no_std]
 #![no_main]
 
-use core::str::Split;
-
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::gpio;
-use heapless::{String, Vec};
 use embassy_rp::uart;
 use embassy_time::Timer;
 use embassy_rp::uart::{Uart, Config};
@@ -18,18 +15,16 @@ use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
 use embassy_rp::peripherals::UART0;
-use heapless::{Vec, String};
+use heapless::Vec;
 
 use {defmt_rtt as _, panic_probe as _};
 
 mod nmea;
 mod math;
+mod types;
 
-const MAX_LINES: usize = 100;
-const LINE_LEN: usize = 256;
-
-type Line = String<LINE_LEN>;
-type Burst = Vec<Line, MAX_LINES>;
+use crate::types::{Line, Burst};
+use crate::nmea::BURST_SAT_SIZE;
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
@@ -51,25 +46,10 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    info!("Start of Control");
     // Init peripherals
     let p = embassy_rp::init(Default::default());
-
-    let data = Vec::<String<128>, 64>::new();
-
-    nmea::parse_burst(data);
-
-    let x = [0.1, 0.2, 0.3];
-    let mut y = [0.4, 0.5, 0.6];
-    let frequencies = [1.0, 2.0, 3.0];
-    let mut power_out = [0.0; 3];
-
-    math::lombscargle_no_std(&x, &y, &frequencies, &mut power_out);
-
-    math::polyfit_and_smooth_no_std(&x, &mut y);
-
-    let mut chsum = fletcher::Fletcher64::new();
-    chsum.update(&[1, 2, 3, 4, 5]);
-    let _ = chsum.value();
+    
     // GPIOS
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
@@ -147,8 +127,10 @@ async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Blocking>, mut ua
 
         }
 
+        let result = nmea::parse_burst(&burst);
+
         // A full burst has been collected, do something with it
-        print_burst(&mut uart_pi, &burst);
+        print_burst(&mut uart_pi, &result);
         burst.clear();
     }
 }
@@ -163,10 +145,22 @@ async fn led_blink(mut led: Output<'static>) {
     }
 }
 
-fn print_burst(uart_pi: &mut uart::Uart<'static, uart::Blocking>, burst: &Burst) {
-    uart_pi.blocking_write("!!!START OF BURST!!!\r\n".as_bytes()).unwrap();
+fn transform_u32_to_array_of_u8(x:u32) -> [u8;4] {
+    let b1 : u8 = ((x >> 24) & 0xff) as u8;
+    let b2 : u8 = ((x >> 16) & 0xff) as u8;
+    let b3 : u8 = ((x >> 8) & 0xff) as u8;
+    let b4 : u8 = (x & 0xff) as u8;
+    return [b1, b2, b3, b4]
+}
+
+
+fn print_burst(uart_pi: &mut uart::Uart<'static, uart::Blocking>, burst: &Vec<u32, BURST_SAT_SIZE>) {
+    // uart_pi.blocking_write("!!!START OF BURST!!!\r\n".as_bytes()).unwrap();
+    // for _ in 0..3 {
+    //     uart_pi.blocking_write(&0u32.to_le_bytes()).unwrap();
+    // }
     for line in burst {
-        uart_pi.blocking_write(line.as_bytes()).unwrap();
+        uart_pi.blocking_write(&transform_u32_to_array_of_u8(*line)).unwrap();
     }
-    uart_pi.blocking_write("!!!END OF BURST!!!\r\n".as_bytes()).unwrap();
+    //uart_pi.blocking_write("!!!END OF BURST!!!\r\n".as_bytes()).unwrap();
 }

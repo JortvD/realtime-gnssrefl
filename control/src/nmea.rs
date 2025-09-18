@@ -1,10 +1,10 @@
 use core::str::Split;
 
-use heapless::{String, Vec};
+use heapless::Vec;
+use crate::types::Burst;
+use defmt::info;
 
-const LINE_LENGTH: usize = 128;
-const BURST_LINE_SIZE: usize = 64;
-const BURST_SAT_SIZE: usize = 128;
+pub const BURST_SAT_SIZE: usize = 128;
 
 const NETWORK_BITS: usize = 2;
 const ELEVATION_BITS: usize = 7;
@@ -15,10 +15,10 @@ const BAND_BITS: usize = 1;
 const NUM_BITS: usize = 8;
 
 fn is_command(word: &str, command: &str) -> bool {
-    word.starts_with('$') && word.len() == 6 && &word[4..6] == command
+    word.starts_with('$') && word.len() == 6 && &word[3..6] == command
 }
 
-pub fn parse_burst(lines: Vec::<String<LINE_LENGTH>, BURST_LINE_SIZE>) -> Vec<u32, BURST_SAT_SIZE> {
+pub fn parse_burst(lines: &Burst) -> Vec<u32, BURST_SAT_SIZE> {
     let mut current_gps_time = u32::MAX;
     let mut values = Vec::<u32, BURST_SAT_SIZE>::new();
     let mut num: u32 = 0;
@@ -44,6 +44,7 @@ pub fn parse_burst(lines: Vec::<String<LINE_LENGTH>, BURST_LINE_SIZE>) -> Vec<u3
             parse_gsv(it, command, &mut values, &mut num);
         }
     }
+
     let mut header = current_gps_time;
     header <<= NUM_BITS;
     header += num;
@@ -54,7 +55,6 @@ pub fn parse_burst(lines: Vec::<String<LINE_LENGTH>, BURST_LINE_SIZE>) -> Vec<u3
 
 fn parse_gga<'a>(mut it: Split<'a, char>) -> Option<u32> {
     let time_str = it.next()?;
-
     let hours = time_str[0..2].parse::<u32>().ok()?;
     let minutes = time_str[2..4].parse::<u32>().ok()?;
     let seconds = time_str[4..6].parse::<u32>().ok()?;
