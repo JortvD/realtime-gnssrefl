@@ -22,6 +22,7 @@ use {defmt_rtt as _, panic_probe as _};
 mod nmea;
 mod math;
 mod types;
+mod fs;
 
 use crate::types::{Line, Burst};
 use crate::nmea::BURST_SAT_SIZE;
