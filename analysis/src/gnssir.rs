@@ -152,12 +152,19 @@ pub fn find_arc_frequencies(arc: &Arc, records: &VecDeque<Record>, config: &Conf
     pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     let (x, y): (Vec<f64>, Vec<f64>) = pairs.into_iter().unzip();
 
+    // Print x, y, and steps as Rust arrays for const usage
+    println!("let X: [f64; {}] = {:?};", x.len(), x);
+    println!("let Y: [f64; {}] = {:?};", y.len(), y);
+    println!("let STEPS: [f64; {}] = {:?};", steps.len(), steps);
     // Lomb–Scargle on sorted/paired data
     let power = lombscargle(
         &x,
         &y,
         &steps,
     );
+    for (i, p) in power.iter().enumerate() {
+        println!("Power[{}] = {:.6}", i, p);
+    }
 
     steps.into_iter().zip(power.into_iter()).collect()
 }

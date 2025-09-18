@@ -75,6 +75,7 @@ fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>
         let frequencies = gnssir::find_arc_frequencies(arc, records, &config);
         let duration2 = start2.elapsed();
         println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
+        return;
 
         for (freq, amp) in &frequencies {
             write_to_csv(&mut wtr, &[id.to_string(), arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
@@ -138,28 +139,28 @@ fn main() {
 
     println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
     
-    // let arcs = find_arcs(&record_db.records);
+    let arcs = find_arcs(&record_db.records);
     // println!("Found {} arcs in the records.", arcs.len());
     
-    // process_arcs(&arcs, &mut record_db.records);
+    process_arcs(&arcs, &mut record_db.records);
 
-    let mut wtr = start_csv("results/records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
-    for record in &record_db.records {
-        write_to_csv(
-            &mut wtr,
-            &[
-                record.id.to_string(),
-                record.time.to_string(),
-                format!("{:?}", record.network),
-                format!("{:?}", record.band),
-                record.elevation.to_string(),
-                record.azimuth.to_string(),
-                record.snr.to_string(),
-            ],
-        );
-    }
-    flush_csv(&mut wtr);
+    // let mut wtr = start_csv("results/records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
+    // for record in &record_db.records {
+    //     write_to_csv(
+    //         &mut wtr,
+    //         &[
+    //             record.id.to_string(),
+    //             record.time.to_string(),
+    //             format!("{:?}", record.network),
+    //             format!("{:?}", record.band),
+    //             record.elevation.to_string(),
+    //             record.azimuth.to_string(),
+    //             record.snr.to_string(),
+    //         ],
+    //     );
+    // }
+    // flush_csv(&mut wtr);
 
-    // find_results(&arcs, &record_db.records, &config);
+    find_results(&arcs, &record_db.records, &config);
     // println!("Total runtime: {:?}", start.elapsed());
 }
