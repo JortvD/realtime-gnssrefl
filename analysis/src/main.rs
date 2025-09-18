@@ -116,6 +116,10 @@ fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>
                 }
             };
 
+            if(amp < 5.0 * mean_ampl) {
+                continue;
+            }
+
             println!("Arc ID {}: Max amplitude frequency {:.4} with amplitude {:.4} (mean: {:.4}) at mean elev {:.2}, azim {:.2}, median time {}, num records {}, freq {}",
                 arc.sat_id, freq, amp, mean_ampl, mean_elev, mean_azim, median_time, arc.record_indices.len(), measure_freq);
         }
@@ -128,7 +132,7 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea5.txt");
+    let nmea_sentences = read_nmea_file("data/data.log");
     let records = parse_nmea(nmea_sentences, &config);
 
     println!("Parsed {} records from NMEA sentences.", records.len());
