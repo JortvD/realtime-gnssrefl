@@ -185,6 +185,7 @@ dependencies = [
  "embassy-executor",
  "embassy-rp",
  "embassy-time",
+ "embassy-util",
  "fletcher",
  "heapless 0.9.1",
  "libm",
@@ -547,6 +548,12 @@ dependencies = [
  "defmt",
  "embedded-io-async",
 ]
+
+[[package]]
+name = "embassy-util"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3100577c74553b04bff99b9b9464229c35063894395001ece2a865255a1b11c6"
 
 [[package]]
 name = "embedded-hal"

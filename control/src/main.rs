@@ -11,6 +11,7 @@ use embassy_rp::gpio;
 use embassy_rp::uart;
 use embassy_time::Timer;
 use embassy_rp::uart::{Uart, Config};
+use embassy_rp::flash::{Flash, Async};
 use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
@@ -61,6 +62,9 @@ async fn main(spawner: Spawner) {
     // UART GPS
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
+
+    // FLASH
+    let mut fs = fs::create_storage(p.FLASH, p.DMA_CH4);
 
     // Spawn tasks
     spawner.spawn(uart_heartbeat(uart_pi, uart_gps)).unwrap();
