@@ -40,6 +40,7 @@ fn process_arcs(arcs: &Vec<db::arc::Arc>, records: &mut VecDeque<db::record::Rec
     let start = std::time::Instant::now();
     for arc in arcs {
         gnssir::fix_arc_elev_azim(arc, records);
+        // return;
     }
     println!("Fixing arc elevation and azimuth took: {:?}", start.elapsed());
     let start = std::time::Instant::now();
@@ -72,6 +73,10 @@ fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>
     for id in 0..arcs.len() {
         let arc = &arcs[id];
         let start2 = std::time::Instant::now();
+        if arc.record_indices.len() < 1000 || arc.record_indices.len() > 2000 {
+            println!("Arc ID {}: Skipping frequency analysis due to insufficient records ({}).", arc.sat_id, arc.record_indices.len());
+            continue;
+        }
         let frequencies = gnssir::find_arc_frequencies(arc, records, &config);
         let duration2 = start2.elapsed();
         println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
@@ -117,7 +122,7 @@ fn main() {
     let config: config::Config = config::Config::default();
     let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
 
-    let nmea_sentences = read_nmea_file("data/nmea2.txt");
+    let nmea_sentences = read_nmea_file("data/data.log");
     let records = parse_nmea(nmea_sentences, &config);
 
     println!("Parsed {} records from NMEA sentences.", records.len());

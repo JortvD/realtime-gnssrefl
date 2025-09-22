@@ -78,7 +78,10 @@ pub fn fix_arc_elev_azim(arc: &Arc, records: &mut VecDeque<Record>) {
     }
 
     // Fit 3rd order polynomials
+    // println!("let X: [f64; {}] = {:?};", times.len(), times);
+    // println!("let Y: [f64; {}] = {:?};", elevs.len(), elevs);
     let elev_poly = polyfit(&times, &elevs, 3).unwrap_or(vec![0.0; 4]);
+
     let azim_poly = polyfit(&times, &azims, 3).unwrap_or(vec![0.0; 4]);
 
     // Helper to evaluate polynomial
@@ -87,8 +90,13 @@ pub fn fix_arc_elev_azim(arc: &Arc, records: &mut VecDeque<Record>) {
     }
 
     // Write interpolated values back
+    let mut i = 0;
     for (&idx, &t) in arc.record_indices.iter().zip(times.iter()) {
         if let Some(rec) = records.get_mut(idx) {
+            if i < 100 {
+                // println!("Elev[{}] = {}", i, eval_poly(&elev_poly, t));
+            }
+            i += 1;
             let new_elev = eval_poly(&elev_poly, t);
             let new_azim = eval_poly(&azim_poly, t);
             //println!("Arc ID {}: Updating record at time {}: elev {:.2} -> {:.2}, azim {:.2} -> {:.2}", arc.sat_id, t as i64, rec.elevation, new_elev, rec.azimuth, new_azim);
