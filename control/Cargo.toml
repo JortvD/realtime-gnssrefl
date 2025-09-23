@@ -20,13 +20,9 @@ embassy-rp = { version = "0.8.0", features = [
   "rp235xa",
   "binary-info",
 ] }
+embassy-sync = "0.6.2"
 embassy-time = "0.5.0"
-embassy-util = "0.0.0"
 fletcher = "1.0.0"
 heapless = "0.9.1"
 libm = "0.2.15"
-littlefs2 = "0.6.1"
 panic-probe = "1.0.0"
-
-[features]
-c-stubs = []
