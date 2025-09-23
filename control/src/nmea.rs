@@ -1,9 +1,11 @@
 use core::str::Split;
 
 use heapless::Vec;
-use crate::types::{Burst, Config};
+use crate::types::*;
 
 pub const BURST_SAT_SIZE: usize = 63;
+use crate::types::*;
+use defmt::info;
 
 const NETWORK_BITS: usize = 2;
 const ELEVATION_BITS: usize = 7;
@@ -26,9 +28,9 @@ impl NMEAParser {
         Self { config }
     }
 
-    pub fn parse_burst(&mut self, lines: &Burst) -> Vec<u32, BURST_SAT_SIZE> {
+    pub fn parse_burst(&mut self, lines: &NmeaBurst) -> Burst {
         let mut current_gps_time = u32::MAX;
-        let mut values = Vec::<u32, BURST_SAT_SIZE>::new();
+        let mut values = Burst::new();
         let mut num: u32 = 0;
 
         values.push(0).ok();
@@ -108,7 +110,7 @@ impl NMEAParser {
         }
     }
 
-    fn parse_gsv<'a>(&mut self, mut it: Split<'a, char>, command: &str, values: &mut Vec::<u32, BURST_SAT_SIZE>, num: &mut u32) -> Option<()> {
+    fn parse_gsv<'a>(&mut self, mut it: Split<'a, char>, command: &str, values: &mut Burst, num: &mut u32) -> Option<()> {
         let network = match self.command_to_network(command) {
             Some(t) => t,
             None => return None
