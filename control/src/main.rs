@@ -51,6 +51,8 @@ async fn main(spawner: Spawner) {
     info!("Start of Control");
     // Init peripherals
     let p = embassy_rp::init(Default::default());
+    let config = types::Config::default();
+    let mut nmea_parser = nmea::NMEAParser::new(config);
 
     let sys_freq = clk_sys_freq();
     info!("System clock frequency: {} MHz", sys_freq / 1_000_000);
@@ -92,12 +94,12 @@ async fn main(spawner: Spawner) {
     // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
-    spawner.spawn(uart_heartbeat(uart_gps)).unwrap();
+    spawner.spawn(uart_heartbeat(uart_gps, nmea_parser)).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
 }
 
 #[embassy_executor::task]
-async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
+async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>, mut nmea: nmea::NMEAParser) {
     let mut nmeaburst = NmeaBurst::new();
     loop {
         // Get burst
@@ -153,7 +155,7 @@ async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
         }
 
         // A full burst has been collected, do something with it
-        let burst = nmea::parse_burst(&nmeaburst);
+        let burst = nmea.parse_burst(&nmeaburst);
         nmeaburst.clear();
 
         for line in burst {
