@@ -66,7 +66,7 @@ fn flush_csv(wtr: &mut Writer<std::fs::File>) {
 }
 
 fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>, config: &config::Config) {
-    let mut wtr = start_csv("results/arc_freqs.csv", &["i", "id", "frequency", "amplitude", "num"]);
+    let mut wtr = start_csv("results/arc_freqs.csv", &["i", "id", "frequency", "amplitude", "num", "arc_elev_length"]);
 
     let mut freqs: Vec<Vec<(f64, f64)>> = Vec::new();
 
@@ -78,8 +78,18 @@ fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>
         let duration2 = start2.elapsed();
         println!("Arc ID {}: Found {} frequency components in {:?}", arc.sat_id, frequencies.len(), duration2);
 
+        let min_elev = arc.record_indices.iter()
+            .filter_map(|&idx| records.get(idx).map(|rec| rec.elevation))
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        let max_elev = arc.record_indices.iter()
+            .filter_map(|&idx| records.get(idx).map(|rec| rec.elevation))
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        let elev_length = max_elev - min_elev;
+
         for (freq, amp) in &frequencies {
-            write_to_csv(&mut wtr, &[id.to_string(), arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string()]);
+            write_to_csv(&mut wtr, &[id.to_string(), arc.sat_id.to_string(), freq.to_string(), amp.to_string(), arc.record_indices.len().to_string(), elev_length.to_string()]);
         }
         freqs.push(frequencies);
     }
