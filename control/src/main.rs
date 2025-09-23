@@ -30,10 +30,9 @@ use crate::nmea::parse_burst;
 use crate::types::{Line, Burst};
 use crate::nmea::BURST_SAT_SIZE;
 
-// bind_interrupts!(pub struct Irqs {
-//     UART0_IRQ  => UARTInterruptHandler<UART0>;
-//     TRNG_IRQ => embassy_rp::trng::InterruptHandler<TRNG>;
-// });
+bind_interrupts!(pub struct Irqs {
+    UART0_IRQ  => UARTInterruptHandler<UART0>;
+});
 
 
 // Program metadata for `picotool info`.
@@ -61,10 +60,6 @@ async fn main(spawner: Spawner) {
     // GPIOS
     let mut led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
-    // UART PI
-    // let config_uart_pi = uart::Config::default();
-    // let uart_pi: uart::Uart<'_, uart::Blocking> = uart::Uart::new_blocking(p.UART1, p.PIN_4, p.PIN_5, config_uart_pi);
-   
     // UART GPS
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
