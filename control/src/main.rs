@@ -7,9 +7,10 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::gpio;
 use embassy_rp::uart;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use embassy_rp::uart::{Uart, Config};
 use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
@@ -21,15 +22,18 @@ use {defmt_rtt as _, panic_probe as _};
 
 mod nmea;
 mod math;
+mod storage;
 mod types;
 
+use crate::storage::FlashStorage;
 use crate::nmea::parse_burst;
 use crate::types::{Line, Burst};
 use crate::nmea::BURST_SAT_SIZE;
 
-bind_interrupts!(pub struct Irqs {
-    UART0_IRQ  => UARTInterruptHandler<UART0>;
-});
+// bind_interrupts!(pub struct Irqs {
+//     UART0_IRQ  => UARTInterruptHandler<UART0>;
+//     TRNG_IRQ => embassy_rp::trng::InterruptHandler<TRNG>;
+// });
 
 
 // Program metadata for `picotool info`.
@@ -50,13 +54,49 @@ async fn main(spawner: Spawner) {
     info!("Start of Control");
     // Init peripherals
     let p = embassy_rp::init(Default::default());
+
+    let sys_freq = clk_sys_freq();
+    info!("System clock frequency: {} MHz", sys_freq / 1_000_000);
     
     // GPIOS
-    let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
+    let mut led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
+    // UART PI
+    // let config_uart_pi = uart::Config::default();
+    // let uart_pi: uart::Uart<'_, uart::Blocking> = uart::Uart::new_blocking(p.UART1, p.PIN_4, p.PIN_5, config_uart_pi);
+   
     // UART GPS
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
+
+    info!("Starting storage test");
+
+    let mut storage = FlashStorage::new(p.FLASH, true);
+
+    info!("Generating data");
+
+    let mut data = [0u8; 4096 * 15];
+    for i in 0..data.len() {
+        data[i] = b'a' + 26 - (i % 26) as u8;
+    }
+
+    // info!("Data: {:?}", &data[..]);
+
+    info!("Erasing");
+
+    storage.erase(0).expect("erase failed");
+
+    info!("Writing");
+
+    storage.write(0, &data).expect("write failed");
+
+    info!("Reading");
+
+    let mut data2 = [0u8; 4096 * 15];
+
+    storage.read(0, &mut data2).expect("read failed");
+
+    // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
     spawner.spawn(uart_heartbeat(uart_gps)).unwrap();
