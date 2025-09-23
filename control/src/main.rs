@@ -15,7 +15,6 @@ use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
 use embassy_rp::peripherals::UART0;
-use embassy_rp::peripherals::UART1;
 use heapless::Vec;
 
 use {defmt_rtt as _, panic_probe as _};
@@ -24,12 +23,12 @@ mod nmea;
 mod math;
 mod types;
 
+use crate::nmea::parse_burst;
 use crate::types::{Line, Burst};
 use crate::nmea::BURST_SAT_SIZE;
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
-    UART1_IRQ  => UARTInterruptHandler<UART1>;
 });
 
 
@@ -55,22 +54,17 @@ async fn main(spawner: Spawner) {
     // GPIOS
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
-    // UART PI
-    let config_uart_pi = uart::Config::default();
-    let uart_pi = uart::Uart::new(p.UART1, p.PIN_4, p.PIN_5, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_pi);
-
     // UART GPS
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
 
     // Spawn tasks
-    spawner.spawn(uart_heartbeat(uart_pi, uart_gps)).unwrap();
+    spawner.spawn(uart_heartbeat(uart_gps)).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
-    
 }
 
 #[embassy_executor::task]
-async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Async>, mut uart_gps: uart::Uart<'static, uart::Async>) {
+async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
     let mut burst = Burst::new();
     loop {
         // Get burst
@@ -88,10 +82,6 @@ async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Async>, mut uart_
 
                     },
                     Err(e) => {
-                        uart_pi.blocking_write("ERROR!".as_bytes()).unwrap();
-                        uart_pi.blocking_write(&(e as u32+65).to_le_bytes()).unwrap();
-                        uart_pi.blocking_write("\r\n".as_bytes()).unwrap();  
-
                         error_in_line = true;
                         continue;   
                     },
@@ -129,10 +119,13 @@ async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Async>, mut uart_
 
         }
 
-        let result = nmea::parse_burst(&burst);
-
         // A full burst has been collected, do something with it
-        print_burst(&mut uart_pi, &result).await;
+        let parsed_burst = nmea::parse_burst(&burst);
+        
+        for line in parsed_burst {
+            info!("0x{:x}", line);
+        }
+
         burst.clear();
     }
 }
@@ -153,16 +146,4 @@ fn transform_u32_to_array_of_u8(x:u32) -> [u8;4] {
     let b3 : u8 = ((x >> 8) & 0xff) as u8;
     let b4 : u8 = (x & 0xff) as u8;
     return [b1, b2, b3, b4]
-}
-
-
-async fn print_burst(uart_pi: &mut uart::Uart<'static, uart::Async>, burst: &Vec<u32, BURST_SAT_SIZE>) {
-    // uart_pi.blocking_write("!!!START OF BURST!!!\r\n".as_bytes()).unwrap();
-    // for _ in 0..3 {
-    //     uart_pi.blocking_write(&0u32.to_le_bytes()).unwrap();
-    // }
-    for line in burst {
-        uart_pi.write(&transform_u32_to_array_of_u8(*line)).await.unwrap();
-    }
-    //uart_pi.blocking_write("!!!END OF BURST!!!\r\n".as_bytes()).unwrap();
 }
