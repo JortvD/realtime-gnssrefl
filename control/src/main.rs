@@ -26,9 +26,7 @@ mod storage;
 mod types;
 
 use crate::storage::FlashStorage;
-use crate::nmea::parse_burst;
-use crate::types::{Line, Burst};
-use crate::nmea::BURST_SAT_SIZE;
+use crate::types::*;
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
@@ -100,12 +98,12 @@ async fn main(spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
-    let mut burst = Burst::new();
+    let mut nmeaburst = NmeaBurst::new();
     loop {
         // Get burst
         loop {
             // Get line
-            let mut line = Line::new(); 
+            let mut line = Nmealine::new(); 
             let mut error_in_line = false;
             loop {
                 // Get byte
@@ -137,11 +135,11 @@ async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
 
             // Add line to burst if it was read without errors
             if !error_in_line {
-                burst.push(line).unwrap();
+                nmeaburst.push(line).unwrap();
             }
 
             // Stop iterating this burst if line is $GNGLL line
-            if let Some(last) = burst.last() {
+            if let Some(last) = nmeaburst.last() {
                 if last.len() >= 6 {
                     match &last.as_str()[..6] {
                         "$GNGLL" => {
@@ -155,13 +153,13 @@ async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
         }
 
         // A full burst has been collected, do something with it
-        let parsed_burst = nmea::parse_burst(&burst);
-        
-        for line in parsed_burst {
+        let burst = nmea::parse_burst(&nmeaburst);
+        nmeaburst.clear();
+
+        for line in burst {
             info!("0x{:x}", line);
         }
 
-        burst.clear();
     }
 }
 
