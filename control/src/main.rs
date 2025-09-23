@@ -26,6 +26,7 @@ mod storage;
 mod types;
 
 use crate::storage::FlashStorage;
+use crate::nmea::parse_burst;
 use crate::types::{Line, Burst};
 use crate::nmea::BURST_SAT_SIZE;
 
@@ -63,10 +64,10 @@ async fn main(spawner: Spawner) {
     // UART PI
     // let config_uart_pi = uart::Config::default();
     // let uart_pi: uart::Uart<'_, uart::Blocking> = uart::Uart::new_blocking(p.UART1, p.PIN_4, p.PIN_5, config_uart_pi);
-    
+   
     // UART GPS
-    // let config_uart_gps = uart::Config::default();
-    // let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
+    let config_uart_gps = uart::Config::default();
+    let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
 
     info!("Starting storage test");
 
@@ -98,13 +99,12 @@ async fn main(spawner: Spawner) {
     // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
-    // spawner.spawn(uart_heartbeat(uart_pi, uart_gps)).unwrap();
-    // spawner.spawn(led_blink(led)).unwrap();
-    
+    spawner.spawn(uart_heartbeat(uart_gps)).unwrap();
+    spawner.spawn(led_blink(led)).unwrap();
 }
 
 #[embassy_executor::task]
-async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Blocking>, mut uart_gps: uart::Uart<'static, uart::Async>) {
+async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>) {
     let mut burst = Burst::new();
     loop {
         // Get burst
@@ -122,10 +122,6 @@ async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Blocking>, mut ua
 
                     },
                     Err(e) => {
-                        uart_pi.blocking_write("ERROR!".as_bytes()).unwrap();
-                        uart_pi.blocking_write(&(e as u32+65).to_le_bytes()).unwrap();
-                        uart_pi.blocking_write("\r\n".as_bytes()).unwrap();  
-
                         error_in_line = true;
                         continue;   
                     },
@@ -163,10 +159,13 @@ async fn uart_heartbeat(mut uart_pi: uart::Uart<'static, uart::Blocking>, mut ua
 
         }
 
-        let result = nmea::parse_burst(&burst);
-
         // A full burst has been collected, do something with it
-        print_burst(&mut uart_pi, &result);
+        let parsed_burst = nmea::parse_burst(&burst);
+        
+        for line in parsed_burst {
+            info!("0x{:x}", line);
+        }
+
         burst.clear();
     }
 }
@@ -187,16 +186,4 @@ fn transform_u32_to_array_of_u8(x:u32) -> [u8;4] {
     let b3 : u8 = ((x >> 8) & 0xff) as u8;
     let b4 : u8 = (x & 0xff) as u8;
     return [b1, b2, b3, b4]
-}
-
-
-fn print_burst(uart_pi: &mut uart::Uart<'static, uart::Blocking>, burst: &Vec<u32, BURST_SAT_SIZE>) {
-    // uart_pi.blocking_write("!!!START OF BURST!!!\r\n".as_bytes()).unwrap();
-    // for _ in 0..3 {
-    //     uart_pi.blocking_write(&0u32.to_le_bytes()).unwrap();
-    // }
-    for line in burst {
-        uart_pi.blocking_write(&transform_u32_to_array_of_u8(*line)).unwrap();
-    }
-    //uart_pi.blocking_write("!!!END OF BURST!!!\r\n".as_bytes()).unwrap();
 }
