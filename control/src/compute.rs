@@ -1,0 +1,556 @@
+use defmt::info;
+use embassy_time::Instant;
+use heapless::Vec;
+use libm::{sinf, powf, sqrtf};
+
+use crate::{
+    math::{self, LsScratch},
+    nmea::BURST_SAT_SIZE,
+    storage::BinStorage,
+    types::{Sector, BIN_BURST_SIZE},
+};
+
+const QC_MIN_SAMPLES: u32 = 500;
+const QC_MIN_MAX_AMP: f32 = 250.0;
+const QC_MIN_PEAK_TO_MEAN: f32 = 2.7;
+
+const ARC_GAP: u16 = 120;
+const C_M_S: f32 = 299_792_458.0;
+const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SAT_SIZE * 4;
+
+const MIN_HEIGHT: f32 = 0.5;
+const MAX_HEIGHT: f32 = 7.0;
+const STEP_SIZE: f32 = 0.05;
+
+type ArcQueue = Vec<Arc, 256>;
+type OutcomeVec = Vec<Outcome, 256>;
+type RangeVec = Vec<f32, 512>;
+type AmplVec = Vec<f32, 512>;
+type SampleVec = Vec<f32, { BIN_BURST_SIZE * 30 }>;
+
+#[derive(Debug, Clone, Copy)]
+struct Arc {
+    id: u16,
+    start_time: u16,
+    end_time: u16,
+}
+
+#[derive(Clone, Copy)]
+struct Record {
+    data: u32,
+}
+
+impl Record {
+    // format ABCDEF
+    // A - 7 bit satellite ID - 0x7F
+    // B - 2 bit network - 0x3
+    // C - 7 bit elevation (0-90) - 0x7F
+    // D - 9 bit azimuth (0-359) - 0x1FF
+    // E - 6 bit SNR (0-64) - 0x3F
+    // F - 1 bit band (0=L1, 1=L5) - 0x1
+    #[inline]
+    fn from_sample(sample: u32) -> Self {
+        Self { data: sample }
+    }
+
+    #[inline]
+    fn get_id(&self) -> u16 {
+        (1 + self.get_network() as u16) * 10000
+            + self.get_band() as u16 * 1000
+            + self.get_satellite() as u16
+    }
+
+    #[inline]
+    fn get_band(&self) -> bool {
+        (self.data & 0x1) != 0
+    }
+
+    #[inline]
+    fn get_snr(&self) -> u8 {
+        ((self.data >> 1) & 0x3F) as u8
+    }
+
+    #[inline]
+    fn get_azimuth(&self) -> u16 {
+        ((self.data >> 7) & 0x1FF) as u16
+    }
+
+    #[inline]
+    fn get_elevation(&self) -> u8 {
+        ((self.data >> 16) & 0x7F) as u8
+    }
+
+    #[inline]
+    fn get_network(&self) -> u8 {
+        ((self.data >> 23) & 0x3) as u8
+    }
+
+    #[inline]
+    fn get_satellite(&self) -> u8 {
+        ((self.data >> 25) & 0x7F) as u8
+    }
+}
+
+struct Outcome {
+    sat_id: u16,
+    start_time: u16,
+    end_time: u16,
+    max_amp: f32,
+    max_rh: f32,
+    mean_amp: f32,
+    num_recs: u32,
+    used: bool,
+}
+
+impl Outcome {
+    #[inline]
+    fn peak_to_mean(&self) -> f32 {
+        if self.mean_amp > 0.0 {
+            self.max_amp / self.mean_amp
+        } else {
+            0.0
+        }
+    }
+}
+
+#[embassy_executor::task]
+pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
+    // One reusable IO buffer for the whole task (no per-call stack duplication).
+    let total_start = Instant::now();
+    let mut io_buf = [0u8; BUF_BYTES];
+
+    let start = Instant::now();
+    let queue = build_arc_queue(&sector, &mut storage, &mut io_buf);
+    info!(
+        "[compute] created queue with {} unique satellites in {} ms",
+        queue.len(),
+        (Instant::now() - start).as_millis()
+    );
+
+    let start = Instant::now();
+    let (range, size) = lin_range(MIN_HEIGHT, MAX_HEIGHT, STEP_SIZE);
+    info!(
+        "[compute] generated linear range with {} steps in {} ms",
+        size,
+        (Instant::now() - start).as_millis()
+    );
+
+    let mut outcomes: OutcomeVec = Vec::new();
+
+    // Reuse these buffers for every arc to avoid per-arc allocations.
+    let mut times: SampleVec = Vec::new();
+    let mut elevs: SampleVec = Vec::new();
+    let mut snrs: SampleVec = Vec::new();
+    let mut x: SampleVec = Vec::new();
+    let mut y: SampleVec = Vec::new();
+    let mut ampls: AmplVec = Vec::new();
+
+    let total_arcs: usize = queue.len(); 
+
+    for (idx, arc) in queue.iter().enumerate() {
+        let full_start = Instant::now();
+        info!(
+            "[compute][{:03}/{:03}] arc sat {}, {}..{}",
+            idx,
+            total_arcs,
+            arc.id,
+            arc.start_time,
+            arc.end_time
+        );
+
+        // Clear buffers for new arc.
+        times.clear();
+        elevs.clear();
+        snrs.clear();
+        ampls.clear();
+        x.clear();
+        y.clear();
+
+        // Stream through storage and collect all records for this arc.
+        let start = Instant::now();
+        let (num_records, first_net_band) = collect_arc_records(
+            &sector,
+            &mut storage,
+            &mut io_buf,
+            *arc,
+            &mut times,
+            &mut elevs,
+            &mut snrs,
+        );
+        info!(
+            "[compute][{:03}/{:03}] fetched {} records in {} ms",
+            idx,
+            total_arcs,
+            num_records,
+            (Instant::now() - start).as_millis()
+        );
+
+        if num_records < QC_MIN_SAMPLES {
+            info!("[compute][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
+            continue;
+        }
+
+        // Make sure elevation is smooth over time
+        let start = Instant::now();
+        math::polyfit_and_smooth_no_std(&times, &mut elevs);
+        info!(
+            "[compute][{:03}/{:03}] smoothed elevation in {} ms",
+            idx,
+            total_arcs,
+            (Instant::now() - start).as_millis()
+        );
+
+        // Compute the relevant wavelength
+        let (net, band) = first_net_band.unwrap_or((0, false));
+        let (freq_hz, cf) = compute_cf(net, band);
+        info!(
+            "[compute][{:03}/{:03}] freq {} MHz, cf {} (net {}, band {})",
+            idx,
+            total_arcs,
+            freq_hz / 1_000_000.0,
+            cf,
+            net,
+            band
+        );
+
+        // Transform samples: x = sin(e)/cf, y = snr.
+        let start = Instant::now();
+        transform_xy(&elevs, &snrs, cf, &mut x, &mut y);
+        info!(
+            "[compute][{:03}/{:03}] computed {} transformed samples in {} ms",
+            idx,
+            total_arcs,
+            x.len(),
+            (Instant::now() - start).as_millis()
+        );
+
+        // In-place sort x and y together (no extra memory).
+        let start = Instant::now();
+        sort_xy_by_x(&mut x, &mut y);
+        info!(
+            "[compute][{:03}/{:03}] sorted {} pairs in {} ms",
+            idx,
+            total_arcs,
+            x.len(),
+            (Instant::now() - start).as_millis()
+        );
+
+        for _ in 0..size {
+            ampls.push(0.0).ok();
+        }
+
+        const N: usize = BIN_BURST_SIZE * 30; // your previous bound
+
+        // Use stack-allocated arrays instead of mutable statics.
+        let mut t:   [f32; N] = [0.0; N];
+        let mut yv:  [f32; N] = [0.0; N];
+        let mut sw:  [f32; N] = [0.0; N];
+        let mut cw:  [f32; N] = [0.0; N];
+        let mut sd:  [f32; N] = [0.0; N];
+        let mut cd:  [f32; N] = [0.0; N];
+
+        // In your task (single-threaded over the buffers):
+        let mut sc = LsScratch {
+            t:   &mut t,
+            yv:  &mut yv,
+            s_w: &mut sw,
+            c_w: &mut cw,
+            s_d: &mut sd,
+            c_d: &mut cd,
+        };
+
+        let f0 = MIN_HEIGHT;
+        let df = STEP_SIZE;
+        let m = size;
+
+        info!(
+            "[compute][{:03}/{:03}] prepared Lomb-Scargle with f0 {}, df {}, m {} samples {}",
+            idx,
+            total_arcs,
+            f0,
+            df,
+            m,
+            ampls.len()
+        );
+
+        let start = Instant::now();
+        math::lombscargle_no_std(&x, &y, f0, df, m, &mut ampls, &mut sc);
+        info!(
+            "[compute][{:03}/{:03}] Lomb-Scargle in {} ms",
+            idx,
+            total_arcs,
+            (Instant::now() - start).as_millis()
+        );
+
+        if let Some((max_amp, max_rh, mean_amp)) = ampl_stats(&range, &ampls) {
+            let _ = outcomes.push(Outcome {
+                sat_id: arc.id,
+                start_time: arc.start_time,
+                end_time: arc.end_time,
+                max_amp,
+                max_rh,
+                mean_amp,
+                num_recs: num_records,
+                used: false,
+            });
+        } else {
+            info!("[compute][{:03}/{:03}] no valid power values, skipping", idx, total_arcs);
+        }
+
+        info!(
+            "[compute][{:03}/{:03}] finished arc in {} ms",
+            idx,
+            total_arcs,
+            (Instant::now() - full_start).as_millis()
+        );
+    }
+
+    let mut rh_sum: f32 = 0.0;
+    let mut used_count: u32 = 0;
+
+    for outcome in &mut outcomes {
+        if outcome.max_amp < QC_MIN_MAX_AMP {
+            info!(
+                "[compute] sat {} ({}..{}) - max_amp {} too low, skipping",
+                outcome.sat_id, outcome.start_time, outcome.end_time, outcome.max_amp
+            );
+            continue;
+        }
+        else if outcome.peak_to_mean() < QC_MIN_PEAK_TO_MEAN {
+            info!(
+                "[compute] sat {} ({}..{}) - peak/mean {} too low, skipping",
+                outcome.sat_id, outcome.start_time, outcome.end_time, outcome.peak_to_mean()
+            );
+            continue;
+        }
+
+        info!(
+            "[compute] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {}",
+            outcome.sat_id, outcome.start_time, outcome.end_time,
+            outcome.max_amp, outcome.max_rh, outcome.mean_amp,
+            outcome.peak_to_mean(), outcome.num_recs
+        );
+        outcome.used = true;
+        rh_sum += outcome.max_rh;
+        used_count += 1;
+    }
+
+    let rh_mean = rh_sum / used_count as f32;
+    let mut rh_std_sum: f32 = 0.0;
+
+    for outcome in &outcomes {
+        if !outcome.used {
+            continue;
+        }
+        rh_std_sum += powf(outcome.max_rh - rh_mean, 2.0);
+    }
+
+    let rh_std = sqrtf(rh_std_sum / used_count as f32);
+
+    if used_count > 0 {
+        info!(
+            "[compute] overall mean rh: {} (std {}, samples {}) in {} ms",
+            rh_mean,
+            rh_std,
+            used_count,
+            (Instant::now() - total_start).as_millis()
+        );
+    } else {
+        info!(
+            "[compute] no valid outcomes in {} ms",
+            (Instant::now() - total_start).as_millis()
+        );
+        return;
+    }
+}
+
+#[inline]
+fn compute_cf(net: u8, band: bool) -> (f32, f32) {
+    let freq_hz = network_band_to_frequency(net, band);
+    let wavelength = C_M_S / freq_hz;
+    let cf = wavelength / 2.0;
+    (freq_hz, cf)
+}
+
+#[inline]
+fn network_band_to_frequency(network: u8, band: bool) -> f32 {
+    match network {
+        0 => if !band { 1575.42e6 } else { 1176.45e6 },
+        1 => if !band { 1602.00e6 } else { 1602.00e6 },
+        2 => if !band { 1575.42e6 } else { 1176.45e6 },
+        3 => if !band { 1561.098e6 } else { 1176.45e6 },
+        _ => 1.0,
+    }
+}
+
+#[inline]
+fn lin_range(start: f32, end: f32, step_size: f32) -> (Vec<f32, 512>, usize) {
+    let mut result = Vec::<f32, 512>::new();
+    let mut current = start;
+    let mut count = 0;
+
+    while current <= end {
+        let _ = result.push(current);
+        current += step_size;
+        count += 1;
+    }
+
+    (result, count)
+}
+
+#[inline]
+fn transform_xy(elevs: &SampleVec, snrs: &SampleVec, cf: f32, x: &mut SampleVec, y: &mut SampleVec) {
+    let inv_cf = 1.0 / cf;
+    for i in 0..snrs.len() {
+        let s = sinf(elevs[i].to_radians()) * inv_cf;
+        x.push(s).ok();
+        y.push(snrs[i]).ok();
+    }
+}
+
+#[inline]
+fn sort_xy_by_x(x: &mut SampleVec, y: &mut SampleVec) {
+    let len = x.len();
+    if len < 2 { return; }
+    for i in 0..len {
+        let mut swapped = false;
+        for j in 0..(len - 1 - i) {
+            if x[j] > x[j + 1] {
+                x.swap(j, j + 1);
+                y.swap(j, j + 1);
+                swapped = true;
+            }
+        }
+        if !swapped { break; }
+    }
+}
+
+#[inline]
+fn ampl_stats(range: &RangeVec, ampl: &AmplVec) -> Option<(f32, f32, f32)> {
+    let mut max = 0.0f32;
+    let mut max_idx = 0usize;
+    let mut mean_acc = 0.0f64;
+    let mut count: u32 = 0;
+
+    for (i, &p) in ampl.iter().enumerate() {
+        if p.is_finite() && p > 0.0 {
+            if p > max {
+                max = p;
+                max_idx = i;
+            }
+            mean_acc += p as f64;
+            count = count.saturating_add(1);
+        }
+    }
+    if count == 0 {
+        None
+    } else {
+        let mean = (mean_acc / count as f64) as f32;
+        Some((max, range[max_idx], mean))
+    }
+}
+
+/// Build the arc queue by streaming records directly out of storage.
+/// Avoids building any `Burst` or `u32` buffers beyond `io_buf`.
+fn build_arc_queue(
+    sector: &Sector,
+    storage: &mut BinStorage,
+    io_buf: &mut [u8; BUF_BYTES],
+) -> ArcQueue {
+    let mut queue: ArcQueue = Vec::new();
+
+    for_each_record_in_sector(sector, storage, io_buf, |time, rec| {
+        let id = rec.get_id();
+
+        // Find most recent arc for this id (search from end).
+        if let Some(arc) = queue.iter_mut().rev().find(|x| x.id == id) {
+            if time > arc.start_time {
+                if time - arc.end_time > ARC_GAP {
+                    queue.push(Arc { id, start_time: time, end_time: time }).ok();
+                } else {
+                    arc.end_time = time;
+                }
+            }
+        } else {
+            queue.push(Arc { id, start_time: time, end_time: time }).ok();
+        }
+    });
+
+    queue
+}
+
+/// Stream through sector and fill `times`, `elevs`, `snrs` for one arc.
+/// Returns (num_records_seen_for_arc, Some((net, band)) from first match).
+fn collect_arc_records(
+    sector: &Sector,
+    storage: &mut BinStorage,
+    io_buf: &mut [u8; BUF_BYTES],
+    arc: Arc,
+    times: &mut SampleVec,
+    elevs: &mut SampleVec,
+    snrs: &mut SampleVec,
+) -> (u32, Option<(u8, bool)>) {
+    let mut num: u32 = 0;
+    let mut first: Option<(u8, bool)> = None;
+
+    for_each_record_in_sector(sector, storage, io_buf, |time, rec| {
+        if rec.get_id() == arc.id && time >= arc.start_time && time <= arc.end_time {
+            if first.is_none() {
+                first = Some((rec.get_network(), rec.get_band()));
+            }
+            num = num.saturating_add(1);
+            times.push(time as f32).ok();
+            elevs.push(rec.get_elevation() as f32).ok();
+            snrs.push(rec.get_snr() as f32).ok();
+        }
+    });
+
+    (num, first)
+}
+
+/// Core streaming reader: iterates every (time, Record) in all bins without allocating.
+/// Calls `f(time, record)` for each record.
+fn for_each_record_in_sector<F>(
+    sector: &Sector,
+    storage: &mut BinStorage,
+    io_buf: &mut [u8; BUF_BYTES],
+    mut f: F,
+) where
+    F: FnMut(u16, Record),
+{
+    let bins = sector.get_bins();
+
+    for &bin_id in bins.iter() {
+        match storage.read(bin_id, io_buf) {
+            Ok(_) => {
+                // Interpret as stream of little-endian u32 words.
+                let mut words = io_buf.chunks_exact(4);
+
+                // Each "burst" begins with a header word, then `num` sample words.
+                while let Some(hdr_b) = words.next() {
+                    let header = u32::from_le_bytes([hdr_b[0], hdr_b[1], hdr_b[2], hdr_b[3]]);
+                    let time = (header >> 8) as u16;
+                    let num = (header & 0xFF) as u8;
+
+                    if time == u16::MAX || num == 0 {
+                        continue;
+                    }
+
+                    for _ in 0..num {
+                        if let Some(smp_b) = words.next() {
+                            let sample =
+                                u32::from_le_bytes([smp_b[0], smp_b[1], smp_b[2], smp_b[3]]);
+                            f(time, Record::from_sample(sample));
+                        } else {
+                            // Truncated burst — stop gracefully.
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                info!("Error reading bin {}: {:?}", bin_id, e);
+            }
+        }
+    }
+}

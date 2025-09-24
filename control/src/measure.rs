@@ -1,7 +1,8 @@
 use defmt::info;
 use embassy_rp::uart;
 use embassy_time::{Duration, Instant, Timer};
-use heapless::Vec;
+use heapless::{String, Vec};
+use core::{fmt::Write, time};
 
 use crate::{nmea, storage::BinStorage, types::{Burst, NmeaBurst, Nmealine, Sector, BIN_BURST_SIZE, BURST_SAMPLE_SIZE}};
 
@@ -13,36 +14,36 @@ pub async fn run_measure(mut uart_gps: uart::Uart<'static, uart::Async>, mut nme
     loop {
         let (nmeaburst, n_bytes, duration) = get_burst(&mut uart_gps).await;
         let start_time = Instant::now() - duration;
-        info!("[measure][?????] received NMEA burst of {} bytes in {} ms", n_bytes, duration.as_millis());
+        info!("[measure][????????] received NMEA burst of {} bytes in {} ms", n_bytes, duration.as_millis());
 
         // A full burst has been collected, do something with it
         let (burst, time, num) = nmea.parse_burst(&nmeaburst);
 
+        let time_str = seconds_to_time_str(time);
+
         if sector.is_time_before_sector(time) {
-            info!("[measure][{:05}] time is before current sector, skipping", time);
-            sleep_until_next(start_time, sector.measure_interval).await;
+            info!("[measure][{}] time is before current sector, skipping", time_str.as_str());
             continue;
         }
 
         if time == u32::MAX {
-            info!("[measure][?????] no valid GPS time in burst, skipping");
-            sleep_until_next(start_time, sector.measure_interval).await;
+            info!("[measure][{}] no valid GPS time in burst, skipping", time_str.as_str());
             continue;
         }
 
         if sector.is_time_after_sector(time) {
-            info!("[measure][{:05}] time is later than current sector, STOPPING", time);
+            info!("[measure][{}] time is later than current sector, STOPPING", time_str.as_str());
             break;
         }
 
-        info!("[measure][{:05}] parsed burst with {} samples", time, num);
+        info!("[measure][{}] parsed burst with {} samples", time_str.as_str(), num);
 
         let bin_id = sector.get_bin_for_time(time);
 
         if bin_id != last_bin_id {
             write_bin_to_storage(last_bin_id, &bin_data, &mut storage);
             bin_data.clear();
-            info!("[measure][{:05}] switched to new bin {}, wrote previous bin {} to storage", time, bin_id, last_bin_id);
+            info!("[measure][{}] switched to new bin {}, wrote previous bin {} to storage", time_str.as_str(), bin_id, last_bin_id);
             last_bin_id = bin_id;
         }
 
@@ -51,25 +52,21 @@ pub async fn run_measure(mut uart_gps: uart::Uart<'static, uart::Async>, mut nme
         bin_data.extend_from_slice(&data).expect("Bin data overflow");
 
         let elapsed = Instant::now() - start_time;
-        info!("[measure][{:05}] burst added to bin {}, elapsed {} ms, bin size {} bytes", time, bin_id, elapsed.as_millis(), bin_data.len());
-        sleep_until_next(start_time, sector.measure_interval).await;
+        info!("[measure][{}] burst added to cached bin {}, elapsed {} ms, cache size {} bytes", time_str.as_str(), bin_id, elapsed.as_millis(), bin_data.len());
     }
 
     write_bin_to_storage(last_bin_id, &bin_data, &mut storage);
     bin_data.clear();
-    info!("[measure][?????] wrote last bin {} to storage", last_bin_id);
+    info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
 }
 
-async fn sleep_until_next(start: Instant, duration_secs: u32) {
-    let buffer = embassy_time::Duration::from_millis(50);
-    
-    let now = Instant::now();
-    let target = start + embassy_time::Duration::from_secs(duration_secs as u64);
-    if target > now + buffer {
-        let sleep_time = target - now - buffer;
-        info!("[measure][?????] sleeping for {} ms until next measurement", sleep_time.as_millis());
-        Timer::after(sleep_time).await;
-    }
+fn seconds_to_time_str(seconds: u32) -> String<8> {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    let mut time_str = String::<8>::new();
+    write!(time_str, "{:02}:{:02}:{:02}", hours, minutes, secs).unwrap();
+    time_str
 }
 
 fn write_bin_to_storage(bin_id: u32, bin_data: &[u8], storage: &mut BinStorage) {
@@ -85,8 +82,14 @@ fn burst_to_bytes(burst: &Burst) -> Vec<u8, {4 * BURST_SAMPLE_SIZE}> {
     let mut data = Vec::<u8, {4 * BURST_SAMPLE_SIZE}>::new();
 
     for sample in burst.iter() {
-        let bytes = sample.to_le_bytes();
-        data.extend_from_slice(&bytes).expect("Burst to bytes overflow");
+        let byte0 = (*sample & 0xFF) as u8;
+        let byte1 = ((*sample >> 8) & 0xFF) as u8;
+        let byte2 = ((*sample >> 16) & 0xFF) as u8;
+        let byte3 = ((*sample >> 24) & 0xFF) as u8;
+        data.push(byte0).unwrap();
+        data.push(byte1).unwrap();
+        data.push(byte2).unwrap();
+        data.push(byte3).unwrap();
     }
 
     data
@@ -116,6 +119,8 @@ async fn get_burst(uart_gps: &mut uart::Uart<'static, uart::Async>) -> (NmeaBurs
                     continue;   
                 },
             }
+
+            // info!("Read byte: {}", read_byte[0] as char);
 
             if n_bytes == 1 {
                 start = Instant::now();

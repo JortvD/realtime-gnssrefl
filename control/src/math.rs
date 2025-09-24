@@ -1,135 +1,176 @@
-use core::f64::consts::PI;
+use core::f32::consts::PI;
 
-/// Kahan compensated addition (f64).
+/// Kahan compensated addition (f32).
 #[inline(always)]
-fn kahan_add(sum: &mut f64, c: &mut f64, x: f64) {
+fn kahan_add(sum: &mut f32, c: &mut f32, x: f32) {
     let y = x - *c;
     let t = *sum + y;
     *c = (t - *sum) - y;
     *sum = t;
 }
 
-/// Lomb–Scargle periodogram (unweighted, Scargle 1982 normalization) for `no_std`.
-///
-/// - `x`: sample times
-/// - `y`: observations (same length as `x`)
-/// - `frequencies`: frequencies to evaluate (cycles per unit of `x`)
-/// - `power_out`: output slice to receive power values; only the first
-///   `min(frequencies.len(), power_out.len())` entries are written.
-///
-/// Skips non-finite `(x, y)` pairs. No allocation. Serial only (single core).
-///
-/// Returns the number of power values written.
-pub fn lombscargle_no_std(
-    x: &[f64],
-    y: &[f64],
-    frequencies: &[f64],
-    power_out: &mut [f64],
-) -> usize {
-    let m = core::cmp::min(frequencies.len(), power_out.len());
-    if m == 0 {
-        return 0;
-    }
+/// Scratch buffers for the uniform-grid accelerator.
+/// All slices must have length >= number of valid (finite) samples.
+pub struct LsScratch<'a> {
+    pub t:     &'a mut [f32; 240 * 30], // packed finite times
+    pub yv:    &'a mut [f32; 240 * 30], // packed (y - mean)
+    pub s_w:   &'a mut [f32; 240 * 30], // sin(ω_k t_i) current
+    pub c_w:   &'a mut [f32; 240 * 30], // cos(ω_k t_i) current
+    pub s_d:   &'a mut [f32; 240 * 30], // sin(Δω t_i), constant across k
+    pub c_d:   &'a mut [f32; 240 * 30], // cos(Δω t_i), constant across k
+}
 
-    // --- Pass 0: mean of finite y's where (x,y) are both finite
-    let (mut sum_y, mut comp_y) = (0.0_f64, 0.0_f64);
-    let mut n: u64 = 0;
-    for (&ti, &yi) in x.iter().zip(y.iter()) {
+#[inline(always)]
+fn pack_center_and_init<'a>(
+    x: &[f32], y: &[f32],
+    f0_omega: f32, d_omega: f32,
+    sc: &mut LsScratch<'a>
+) -> usize {
+    // mean over finite
+    let len = core::cmp::min(x.len(), y.len());
+    let (mut sum_y, mut comp_y) = (0.0f32, 0.0f32);
+    let mut n = 0usize;
+    for i in 0..len {
+        let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
         if ti.is_finite() && yi.is_finite() {
             kahan_add(&mut sum_y, &mut comp_y, yi);
             n += 1;
         }
     }
+    if n == 0 { return 0; }
+    let mean_y = sum_y / (n as f32);
 
+    // pack & precompute sin/cos at ω0 t and Δω t
+    let mut j = 0usize;
+    for i in 0..len {
+        let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
+        if !(ti.is_finite() && yi.is_finite()) { continue; }
+
+        let yv = yi - mean_y;
+        sc.t[j]  = ti;
+        sc.yv[j] = yv;
+
+        let a0 = f0_omega * ti;
+        let (s0, c0) = libm::sincosf(a0);
+        sc.s_w[j] = s0;
+        sc.c_w[j] = c0;
+
+        let d  = d_omega * ti;
+        let (sd, cd) = libm::sincosf(d);
+        sc.s_d[j] = sd;
+        sc.c_d[j] = cd;
+
+        j += 1;
+    }
+    j
+}
+
+/// Ultra-fast Lomb–Scargle for **uniform frequency grid**:
+/// frequencies: f_k = f0 + k*df, for k in [0, m).
+/// Writes min(m, power_out.len()) powers.
+/// Returns number written.
+#[inline(always)]
+pub fn lombscargle_no_std(
+    x: &[f32],
+    y: &[f32],
+    f0: f32,
+    df: f32,
+    m: usize,
+    power_out: &mut [f32],
+    sc: &mut LsScratch<'_>,
+) -> usize {
+    let m = core::cmp::min(m, power_out.len());
+    if m == 0 { return 0; }
+
+    const TWO_PI: f32 = PI * 2.0;
+    const EPS: f32 = 1.0e-7;
+
+    let omega0 = TWO_PI * f0;
+    let domega = TWO_PI * df;
+
+    // Pack/center + init sin/cos tables
+    let n = pack_center_and_init(x, y, omega0, domega, sc);
     if n == 0 {
-        // nothing to do; define output as zeros
-        for p in &mut power_out[..m] {
-            *p = 0.0;
-        }
+        for d in &mut power_out[..m] { *d = 0.0; }
         return m;
     }
 
-    let n_f = n as f64;
-    let mean_y = sum_y / n_f;
-
-    const TWO_PI: f64 = PI * 2.0;
-    const EPS: f64 = 1e-15;
-
-    // --- Evaluate each frequency serially
-    for (dst, &f) in power_out.iter_mut().zip(&frequencies[..m]) {
-        // Handle near-DC gracefully
-        if f.abs() < EPS {
-            *dst = 0.0;
-            continue;
-        }
-
-        let omega = TWO_PI * f;
-
-        // ---- Pass 1: compute tau via sums of sin(2ωt), cos(2ωt)
-        let (mut s2, mut c2) = (0.0_f64, 0.0_f64);
-        let (mut cs2, mut cc2) = (0.0_f64, 0.0_f64); // Kahan comps
-
-        for (&ti, &yi) in x.iter().zip(y.iter()) {
-            if !(ti.is_finite() && yi.is_finite()) {
-                continue;
-            }
-            let a = omega * ti;
-
-            // use libm for no_std trig
-            let s = libm::sin(a);
-            let c = libm::cos(a);
-
-            // sin(2a) = 2 sin a cos a ; cos(2a) = cos^2 a − sin^2 a
+    // For each frequency k
+    for k in 0..m {
+        // --- Pass 1: tau from current sin(ωt), cos(ωt)
+        let (mut s2, mut c2) = (0.0f32, 0.0f32);
+        let (mut cs2, mut cc2) = (0.0f32, 0.0f32);
+        // sin(2a)=2sc; cos(2a)=c^2-s^2
+        for i in 0..n {
+            let s = unsafe { *sc.s_w.get_unchecked(i) };
+            let c = unsafe { *sc.c_w.get_unchecked(i) };
             kahan_add(&mut s2, &mut cs2, 2.0 * s * c);
             kahan_add(&mut c2, &mut cc2, c * c - s * s);
         }
+        let omega_tau = 0.5 * libm::atan2f(s2, c2);
+        let (s_tau, c_tau) = libm::sincosf(omega_tau);
 
-        // omega_tau = 0.5 * atan2(s2, c2)
-        let omega_tau = 0.5 * libm::atan2(s2, c2);
-        let s_tau = libm::sin(omega_tau);
-        let c_tau = libm::cos(omega_tau);
+        // --- Pass 2: rotate by τ, accumulate
+        let (mut yc, mut ys) = (0.0f32, 0.0f32);
+        let (mut cyc, mut cys) = (0.0f32, 0.0f32);
+        let (mut cc, mut ss)  = (0.0f32, 0.0f32);
 
-        // ---- Pass 2: sums at shifted times, mean-centering y on the fly
-        let (mut yc, mut ys) = (0.0_f64, 0.0_f64);
-        let (mut cyc, mut cys) = (0.0_f64, 0.0_f64); // Kahan comps (sensitive)
-        let (mut cc, mut ss) = (0.0_f64, 0.0_f64);   // non-negative → no Kahan
+        for i in 0..n {
+            let s = unsafe { *sc.s_w.get_unchecked(i) };
+            let c = unsafe { *sc.c_w.get_unchecked(i) };
 
-        for (&ti, &yi) in x.iter().zip(y.iter()) {
-            if !(ti.is_finite() && yi.is_finite()) {
-                continue;
-            }
-            let yv = yi - mean_y;
-
-            let a = omega * ti;
-            let s = libm::sin(a);
-            let c = libm::cos(a);
-
-            // rotate by τ
+            // rotate (s,c) -> (s_shift, c_shift)
             let s_shift = s * c_tau - c * s_tau;
             let c_shift = c * c_tau + s * s_tau;
 
+            let yv = unsafe { *sc.yv.get_unchecked(i) };
             kahan_add(&mut yc, &mut cyc, yv * c_shift);
             kahan_add(&mut ys, &mut cys, yv * s_shift);
 
-            // FMA not available in software; regular multiply-add is fine.
             cc += c_shift * c_shift;
             ss += s_shift * s_shift;
         }
 
         let pc = if cc > EPS { (yc * yc) / cc } else { 0.0 };
         let ps = if ss > EPS { (ys * ys) / ss } else { 0.0 };
-        *dst = 0.5 * (pc + ps);
+        power_out[k] = 0.5 * (pc + ps);
+
+        // --- Advance sin/cos to next frequency using angle addition with Δω
+        // sin' = s*cΔ + c*sΔ ; cos' = c*cΔ - s*sΔ
+        // This avoids any sin/cos per-sample inside the loop over k.
+        if k + 1 < m {
+            for i in 0..n {
+                let s = unsafe { *sc.s_w.get_unchecked(i) };
+                let c = unsafe { *sc.c_w.get_unchecked(i) };
+                let sd = unsafe { *sc.s_d.get_unchecked(i) };
+                let cd = unsafe { *sc.c_d.get_unchecked(i) };
+
+                let s_next = s * cd + c * sd;
+                let c_next = c * cd - s * sd;
+
+                unsafe {
+                    *sc.s_w.get_unchecked_mut(i) = s_next;
+                    *sc.c_w.get_unchecked_mut(i) = c_next;
+                }
+            }
+        }
     }
 
     m
 }
 
-/// Solve A x = b in-place via Gaussian elimination with partial pivoting.
+
+
+use core::cmp::min;
+
+use defmt::info;
+
+/// Solve A x = b in-place via Gaussian elimination with partial pivoting (no_std, f32).
 /// - `a` is an NxN matrix (only top-left n×n is used)
 /// - `b` is length N (only first n used)
 /// Returns `true` on success, `false` if a near-singular pivot is found.
-fn gauss_solve<const N: usize>(a: &mut [[f64; N]; N], b: &mut [f64; N], n: usize) -> bool {
-    const EPS: f64 = 1e-12;
+pub fn gauss_solve<const N: usize>(a: &mut [[f32; N]; N], b: &mut [f32; N], n: usize) -> bool {
+    const EPS: f32 = 1e-6;
 
     // Forward elimination
     for k in 0..n {
@@ -186,33 +227,32 @@ fn gauss_solve<const N: usize>(a: &mut [[f64; N]; N], b: &mut [f64; N], n: usize
     true
 }
 
-const DEG: usize = 3; // polynomial degree for polyfit_and_smooth_no_std
+pub const DEG: usize = 3; // polynomial degree for polyfit_and_smooth_no_std
 
 /// Fit a polynomial of degree `DEG` to (x,y) via least squares and overwrite `y` with
 /// the fitted values at each `x[i]`.
 ///
 /// - `DEG` is the (compile-time) polynomial degree (e.g., 1=line, 2=quadratic).
-/// - Works in `no_std`, single-core, no allocation.
+/// - Works in `no_std`, single-core, no allocation, `f32`.
 /// - Non-finite (x,y) pairs are **ignored** during fitting.
 /// - On write-back, only entries with finite `x[i]` are updated; others are left unchanged.
 /// - If there are fewer than `DEG+1` valid points, it automatically downgrades to
 ///   `effective_deg = valid_points-1`.
 ///
 /// Returns the degree actually used (effective degree).
-pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
+pub fn polyfit_and_smooth_no_std(x: &[f32], y: &mut [f32]) -> usize {
     debug_assert_eq!(x.len(), y.len());
-    let n_pts = x.len();
 
     // Count valid pairs and collect power sums up to 2*DEG without pow()
     // s[k] = sum t^k  for k=0..2*DEG
-    // b[i] = sum y * t^i for i=0..DEG
+    // bt[i] = sum y * t^i for i=0..DEG
     let mut valid = 0usize;
 
-    // Use only the needed lengths; cap degree by the number of valid pairs (later).
-    let mut s: [f64; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
-    let mut cs: [f64; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
-    let mut bt: [f64; DEG + 1] = [0.0; DEG + 1];
-    let mut cbt: [f64; DEG + 1] = [0.0; DEG + 1];
+    // Accumulators (+ compensation) sized for DEG
+    let mut s:   [f32; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
+    let mut cs:  [f32; 2 * DEG + 1] = [0.0; 2 * DEG + 1];
+    let mut bt:  [f32; DEG + 1]     = [0.0; DEG + 1];
+    let mut cbt: [f32; DEG + 1]     = [0.0; DEG + 1];
 
     for (&xi, &yi) in x.iter().zip(y.iter()) {
         if !(xi.is_finite() && yi.is_finite()) {
@@ -220,15 +260,15 @@ pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
         }
         valid += 1;
 
-        // iteratively build powers of xi
-        let mut p = 1.0_f64;
+        // iteratively build powers of xi into s
+        let mut p = 1.0_f32;
         for k in 0..(2 * DEG + 1) {
             kahan_add(&mut s[k], &mut cs[k], p);
             p *= xi;
         }
 
-        // reset p and accumulate y * xi^i
-        let mut p2 = 1.0_f64;
+        // accumulate y * xi^i into bt
+        let mut p2 = 1.0_f32;
         for i in 0..(DEG + 1) {
             kahan_add(&mut bt[i], &mut cbt[i], yi * p2);
             p2 *= xi;
@@ -241,11 +281,13 @@ pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
     }
 
     // Effective degree cannot exceed valid-1
-    let mut eff_deg = DEG.min(valid.saturating_sub(1));
-    // Safety: cap at array limits (already ensured by consts), but handle degenerate sums
+    let eff_deg = min(DEG, valid.saturating_sub(1));
+
+    // Constant fit fast-path
     if eff_deg == 0 {
-        // Constant fit: a0 = mean(y on valid)
-        let a0 = bt[0] / (s[0].max(1.0));
+        // s[0] accumulated 1 per valid sample => count
+        let denom = if s[0] > 0.0 { s[0] } else { 1.0 };
+        let a0 = bt[0] / denom;
         for (xi, yi) in x.iter().zip(y.iter_mut()) {
             if xi.is_finite() {
                 *yi = a0;
@@ -258,8 +300,8 @@ pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
 
     // Build normal-equations matrix A and rhs b for size n
     // A[i][j] = sum x^(i+j) = s[i+j],  b[i] = sum y x^i = bt[i]
-    let mut a: [[f64; DEG + 1]; DEG + 1] = [[0.0; DEG + 1]; DEG + 1];
-    let mut bvec: [f64; DEG + 1] = [0.0; DEG + 1];
+    let mut a: [[f32; DEG + 1]; DEG + 1] = [[0.0; DEG + 1]; DEG + 1];
+    let mut bvec: [f32; DEG + 1] = [0.0; DEG + 1];
 
     for i in 0..n {
         bvec[i] = bt[i];
@@ -272,7 +314,8 @@ pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
     let ok = gauss_solve::<{ DEG + 1 }>(&mut a, &mut bvec, n);
     if !ok {
         // fall back: constant fit to mean of y over valid samples
-        let a0 = bt[0] / (s[0].max(1.0));
+        let denom = if s[0] > 0.0 { s[0] } else { 1.0 };
+        let a0 = bt[0] / denom;
         for (xi, yi) in x.iter().zip(y.iter_mut()) {
             if xi.is_finite() {
                 *yi = a0;
@@ -296,10 +339,3 @@ pub fn polyfit_and_smooth_no_std(x: &[f64], y: &mut [f64]) -> usize {
 
     eff_deg
 }
-
-/* -------------------------
-   Optional: f32 variant
-   -------------------------
-   Switch types to f32, constants to f32, and adjust EPS in gauss_solve
-   if you want better speed on RP2040 (no FPU).
-*/

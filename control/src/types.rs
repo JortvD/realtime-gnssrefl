@@ -33,10 +33,10 @@ impl Default for Config {
         midpoints.push(17).unwrap();
         midpoints.push(23).unwrap();
         Self {
-            pre_min_elevation: 0,
-            pre_max_elevation: 90,
-            pre_min_azimuth: 0,
-            pre_max_azimuth: 360,
+            pre_min_elevation: 5,
+            pre_max_elevation: 15,
+            pre_min_azimuth: 50,
+            pre_max_azimuth: 150,
             sector_measure_duration: 60 * 60 * 2,
             sector_midpoints: midpoints,
         }
@@ -63,6 +63,14 @@ impl Sector {
             bin_time_size,
             total_bins,
         }
+    }
+
+    pub fn get_bins(&self) -> Vec<u32, 128> {
+        let mut bins = Vec::<u32, 128>::new();
+        for i in 0..self.n_bins {
+            bins.push((self.start_bin_id + i) % self.total_bins).unwrap();
+        }
+        bins
     }
 
     pub fn get_bin_for_time(&self, time: u32) -> u32 {

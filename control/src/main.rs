@@ -26,7 +26,9 @@ mod math;
 mod storage;
 mod types;
 mod measure;
+mod compute;
 
+use crate::compute::run_compute;
 use crate::measure::run_measure;
 use crate::storage::FlashStorage;
 use crate::types::*;
@@ -55,7 +57,7 @@ async fn main(spawner: Spawner) {
     // Init peripherals
 
     let mut config: embassy_rp::config::Config = Default::default();
-    config.clocks = ClockConfig::system_freq(15_000_000).unwrap();
+    config.clocks = ClockConfig::system_freq(150_000_000).unwrap();
     let p = embassy_rp::init(config);
 
     let config = types::Config::default();
@@ -71,16 +73,17 @@ async fn main(spawner: Spawner) {
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
 
-    let storage = FlashStorage::new(p.FLASH, true);
+    let storage = FlashStorage::new(p.FLASH, false);
     let bin_storage = storage::BinStorage::new(50, 240, storage);
 
-    let sector = Sector::new(0, 30, 30, 1, 60, 50);
+    let sector = Sector::new(0, 32022, 8, 1, 240, 50);
 
 
     // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
-    spawner.spawn(run_measure(uart_gps, nmea_parser, sector, bin_storage)).unwrap();
+    // spawner.spawn(run_measure(uart_gps, nmea_parser, sector, bin_storage)).unwrap();
+    spawner.spawn(run_compute(sector, bin_storage)).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
 }
 
