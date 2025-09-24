@@ -28,7 +28,7 @@ impl NMEAParser {
         Self { config }
     }
 
-    pub fn parse_burst(&mut self, lines: &NmeaBurst) -> Burst {
+    pub fn parse_burst(&mut self, lines: &NmeaBurst) -> (Burst, u32, u32) {
         let mut current_gps_time = u32::MAX;
         let mut values = Burst::new();
         let mut num: u32 = 0;
@@ -60,7 +60,7 @@ impl NMEAParser {
         header += num;
         values[0] = header;
 
-        values
+        (values, current_gps_time, num)
     }
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {

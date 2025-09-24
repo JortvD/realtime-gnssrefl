@@ -8,6 +8,7 @@
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::clocks::clk_sys_freq;
+use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
 use embassy_rp::uart;
 use embassy_time::{Instant, Timer};
@@ -24,7 +25,9 @@ mod nmea;
 mod math;
 mod storage;
 mod types;
+mod measure;
 
+use crate::measure::run_measure;
 use crate::storage::FlashStorage;
 use crate::types::*;
 
@@ -50,7 +53,11 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 async fn main(spawner: Spawner) {
     info!("Start of Control");
     // Init peripherals
-    let p = embassy_rp::init(Default::default());
+
+    let mut config: embassy_rp::config::Config = Default::default();
+    config.clocks = ClockConfig::system_freq(15_000_000).unwrap();
+    let p = embassy_rp::init(config);
+
     let config = types::Config::default();
     let mut nmea_parser = nmea::NMEAParser::new(config);
 
@@ -64,106 +71,19 @@ async fn main(spawner: Spawner) {
     let config_uart_gps = uart::Config::default();
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
 
-    info!("Starting storage test");
+    let storage = FlashStorage::new(p.FLASH, true);
+    let bin_storage = storage::BinStorage::new(50, 240, storage);
 
-    let mut storage = FlashStorage::new(p.FLASH, true);
+    let sector = Sector::new(0, 30, 30, 1, 60, 50);
 
-    info!("Generating data");
-
-    let mut data = [0u8; 4096 * 15];
-    for i in 0..data.len() {
-        data[i] = b'a' + 26 - (i % 26) as u8;
-    }
-
-    // info!("Data: {:?}", &data[..]);
-
-    info!("Erasing");
-
-    storage.erase(0).expect("erase failed");
-
-    info!("Writing");
-
-    storage.write(0, &data).expect("write failed");
-
-    info!("Reading");
-
-    let mut data2 = [0u8; 4096 * 15];
-
-    storage.read(0, &mut data2).expect("read failed");
 
     // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
-    spawner.spawn(uart_heartbeat(uart_gps, nmea_parser)).unwrap();
+    spawner.spawn(run_measure(uart_gps, nmea_parser, sector, bin_storage)).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
 }
 
-#[embassy_executor::task]
-async fn uart_heartbeat(mut uart_gps: uart::Uart<'static, uart::Async>, mut nmea: nmea::NMEAParser) {
-    let mut nmeaburst = NmeaBurst::new();
-    loop {
-        // Get burst
-        loop {
-            // Get line
-            let mut line = Nmealine::new(); 
-            let mut error_in_line = false;
-            loop {
-                // Get byte
-
-                // Check if read is succesful
-                let mut read_byte: [u8; 1] = [0; 1];
-                match uart_gps.read(&mut read_byte).await {
-                    Ok(_) => {
-
-                    },
-                    Err(e) => {
-                        error_in_line = true;
-                        continue;   
-                    },
-                }     
-                
-                // Add byte as char to line
-                line.push(read_byte[0] as char).unwrap();
-
-                // Stop iterating this line if byte is end of line
-                match read_byte[0] {
-                    b'\n' => {
-                        break;
-                    }
-
-                    _ => {}
-                }
-            }   
-
-            // Add line to burst if it was read without errors
-            if !error_in_line {
-                nmeaburst.push(line).unwrap();
-            }
-
-            // Stop iterating this burst if line is $GNGLL line
-            if let Some(last) = nmeaburst.last() {
-                if last.len() >= 6 {
-                    match &last.as_str()[..6] {
-                        "$GNGLL" => {
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-        }
-
-        // A full burst has been collected, do something with it
-        let burst = nmea.parse_burst(&nmeaburst);
-        nmeaburst.clear();
-
-        for line in burst {
-            info!("0x{:x}", line);
-        }
-
-    }
-}
 
 #[embassy_executor::task]
 async fn led_blink(mut led: Output<'static>) {
@@ -173,12 +93,4 @@ async fn led_blink(mut led: Output<'static>) {
         led.set_low();
         Timer::after_millis(25).await;
     }
-}
-
-fn transform_u32_to_array_of_u8(x:u32) -> [u8;4] {
-    let b1 : u8 = ((x >> 24) & 0xff) as u8;
-    let b2 : u8 = ((x >> 16) & 0xff) as u8;
-    let b3 : u8 = ((x >> 8) & 0xff) as u8;
-    let b4 : u8 = (x & 0xff) as u8;
-    return [b1, b2, b3, b4]
 }
