@@ -20,15 +20,63 @@ pub struct Config {
     pub pre_max_elevation: u32,
     pub pre_min_azimuth: u32,
     pub pre_max_azimuth: u32,
+
+    pub sector_measure_duration: u32,
+    pub sector_midpoints: Vec<u32, 24>,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let mut midpoints = Vec::<u32, 24>::new();
+        midpoints.push(5).unwrap();
+        midpoints.push(11).unwrap();
+        midpoints.push(17).unwrap();
+        midpoints.push(23).unwrap();
         Self {
             pre_min_elevation: 0,
             pre_max_elevation: 90,
             pre_min_azimuth: 0,
             pre_max_azimuth: 360,
+            sector_measure_duration: 60 * 60 * 2,
+            sector_midpoints: midpoints,
         }
+    }
+}
+
+pub struct Sector {
+    pub start_bin_id: u32,
+    start_time: u32,
+    n_bins: u32,
+    pub measure_interval: u32,
+
+    bin_time_size: u32,
+    total_bins: u32,
+}
+
+impl Sector {
+    pub fn new(start_bin_id: u32, start_time: u32, n_bins: u32, measure_interval: u32, bin_time_size: u32, total_bins: u32) -> Self {
+        Self {
+            start_bin_id,
+            start_time,
+            n_bins,
+            measure_interval,
+            bin_time_size,
+            total_bins,
+        }
+    }
+
+    pub fn get_bin_for_time(&self, time: u32) -> u32 {
+        let dt = time - self.start_time;
+        let bin_id = self.start_bin_id + dt / self.bin_time_size;
+
+        bin_id % self.total_bins
+    }
+
+    pub fn is_time_before_sector(&self, time: u32) -> bool {
+        time < self.start_time
+    }
+
+    pub fn is_time_after_sector(&self, time: u32) -> bool {
+        time > self.start_time + self.n_bins * self.bin_time_size
     }
 }

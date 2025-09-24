@@ -41,16 +41,16 @@ impl FlashStorage {
         self.get_storage_start() + container_id as u32 * CONTAINER_SIZE as u32 * BLOCK_SIZE as u32
     }
 
-    pub fn write(&mut self, container_id: usize, data: &[u8]) -> Result<(), Error> {
-        if data.len() > CONTAINER_SIZE * BLOCK_SIZE {
+    pub fn write(&mut self, container_id: usize, offset: u32, data: &[u8]) -> Result<(), Error> {
+        if offset as usize + data.len() > CONTAINER_SIZE * BLOCK_SIZE {
             error!("Data size exceeds container size");
             return Err(Error::Other);
         }
 
         let start_time = if self.timing { Some(Instant::now()) } else { None };
-        let offset = self.get_container_address(container_id);
+        let addr = self.get_container_address(container_id) + offset;
 
-        self.flash.blocking_write(offset, &data)?;
+        self.flash.blocking_write(addr, &data)?;
 
         if let Some(start) = start_time {
             info!("Write took {} ms", (Instant::now() - start).as_millis());
@@ -59,17 +59,17 @@ impl FlashStorage {
         Ok(())
     }
 
-    pub fn read(&mut self, container_id: usize, buffer: &mut [u8]) -> Result<(), Error> {
-        if buffer.len() > CONTAINER_SIZE * BLOCK_SIZE {
+    pub fn read(&mut self, container_id: usize, offset: u32, buffer: &mut [u8]) -> Result<(), Error> {
+        if offset as usize + buffer.len() > CONTAINER_SIZE * BLOCK_SIZE {
             error!("Buffer size exceeds container size");
             return Err(Error::Other);
         }
 
         let start_time = if self.timing { Some(Instant::now()) } else { None };
-        let offset = self.get_container_address(container_id);
+        let addr = self.get_container_address(container_id) + offset;
         let buf_len = buffer.len();
 
-        self.flash.blocking_read(offset, &mut buffer[..buf_len])?;
+        self.flash.blocking_read(addr, &mut buffer[..buf_len])?;
 
         if let Some(start) = start_time {
             info!("Read took {} ms", (Instant::now() - start).as_millis());
@@ -90,5 +90,30 @@ impl FlashStorage {
         }
 
         Ok(())
+    }
+}
+
+pub struct BinStorage {
+    n_bins: u32,
+    bin_time_size: u32,
+    storage: FlashStorage,
+}
+
+impl BinStorage {
+    pub fn new(n_bins: u32, bin_time_size: u32, storage: FlashStorage) -> Self {
+        Self {
+            n_bins,
+            bin_time_size,
+            storage,
+        }
+    }
+
+    pub fn write(&mut self, bin_id: u32, data: &[u8]) -> Result<(), Error> {
+        self.storage.erase(bin_id as usize)?;
+        self.storage.write(bin_id as usize, 0, data)
+    }
+
+    pub fn read(&mut self, bin_id: u32, buffer: &mut [u8]) -> Result<(), Error> {
+        self.storage.read(bin_id as usize, 0, buffer)
     }
 }
