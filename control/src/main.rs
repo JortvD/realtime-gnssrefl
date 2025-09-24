@@ -24,6 +24,7 @@ mod nmea;
 mod math;
 mod storage;
 mod types;
+mod clock;
 
 use crate::storage::FlashStorage;
 use crate::types::*;
@@ -94,6 +95,7 @@ async fn main(spawner: Spawner) {
     // info!("Data: {:?}", &data2[..]);
 
     // Spawn tasks
+    spawner.spawn(clock::clk_control()).unwrap();
     spawner.spawn(uart_heartbeat(uart_gps, nmea_parser)).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
 }
