@@ -4,10 +4,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    math::{self, LsScratch},
-    nmea::BURST_SAT_SIZE,
-    storage::BinStorage,
-    types::{Sector, BIN_BURST_SIZE},
+    math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -23,7 +20,7 @@ const MAX_HEIGHT: f32 = 7.0;
 const STEP_SIZE: f32 = 0.05;
 
 type ArcQueue = Vec<Arc, 256>;
-type OutcomeVec = Vec<Outcome, 256>;
+type ObservationVec = Vec<Observation, 256>;
 type RangeVec = Vec<f32, 512>;
 type AmplVec = Vec<f32, 512>;
 type SampleVec = Vec<f32, { BIN_BURST_SIZE * 30 }>;
@@ -91,38 +88,22 @@ impl Record {
     }
 }
 
-struct Outcome {
-    sat_id: u16,
-    start_time: u16,
-    end_time: u16,
-    max_amp: f32,
-    max_rh: f32,
-    mean_amp: f32,
-    num_recs: u32,
-    used: bool,
-}
-
-impl Outcome {
-    #[inline]
-    fn peak_to_mean(&self) -> f32 {
-        if self.mean_amp > 0.0 {
-            self.max_amp / self.mean_amp
-        } else {
-            0.0
-        }
-    }
-}
-
 #[embassy_executor::task]
-pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
+pub async fn run_compute(
+    sector: Sector, 
+    mut storage: FlashStorage,
+    config: Config,
+) {
     // One reusable IO buffer for the whole task (no per-call stack duplication).
     let total_start = Instant::now();
+    let bin_storage = BinStorage::new(config.seconds_per_bin);
+    let measurement_storage = MeasurementStorage::new();
     let mut io_buf = [0u8; BUF_BYTES];
 
     let start = Instant::now();
-    let queue = build_arc_queue(&sector, &mut storage, &mut io_buf);
+    let queue = build_arc_queue(&sector, &bin_storage, &mut storage, &mut io_buf);
     info!(
-        "[compute] created queue with {} unique satellites in {} ms",
+        "[compute] created queue with {} arcs in {} ms",
         queue.len(),
         (Instant::now() - start).as_millis()
     );
@@ -135,7 +116,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
         (Instant::now() - start).as_millis()
     );
 
-    let mut outcomes: OutcomeVec = Vec::new();
+    let mut observations: ObservationVec = Vec::new();
 
     // Reuse these buffers for every arc to avoid per-arc allocations.
     let mut times: SampleVec = Vec::new();
@@ -170,6 +151,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
         let start = Instant::now();
         let (num_records, first_net_band) = collect_arc_records(
             &sector,
+            &bin_storage,
             &mut storage,
             &mut io_buf,
             *arc,
@@ -226,7 +208,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
 
         // In-place sort x and y together (no extra memory).
         let start = Instant::now();
-        sort_xy_by_x(&mut x, &mut y);
+        quicksort_xy(&mut x, &mut y);
         info!(
             "[compute][{:03}/{:03}] sorted {} pairs in {} ms",
             idx,
@@ -263,16 +245,6 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
         let df = STEP_SIZE;
         let m = size;
 
-        info!(
-            "[compute][{:03}/{:03}] prepared Lomb-Scargle with f0 {}, df {}, m {} samples {}",
-            idx,
-            total_arcs,
-            f0,
-            df,
-            m,
-            ampls.len()
-        );
-
         let start = Instant::now();
         math::lombscargle_no_std(&x, &y, f0, df, m, &mut ampls, &mut sc);
         info!(
@@ -283,7 +255,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
         );
 
         if let Some((max_amp, max_rh, mean_amp)) = ampl_stats(&range, &ampls) {
-            let _ = outcomes.push(Outcome {
+            let _ = observations.push(Observation {
                 sat_id: arc.id,
                 start_time: arc.start_time,
                 end_time: arc.end_time,
@@ -294,7 +266,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
                 used: false,
             });
         } else {
-            info!("[compute][{:03}/{:03}] no valid power values, skipping", idx, total_arcs);
+            info!("[compute][{:03}/{:03}] no valid amplitude values, skipping", idx, total_arcs);
         }
 
         info!(
@@ -308,44 +280,52 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
     let mut rh_sum: f32 = 0.0;
     let mut used_count: u32 = 0;
 
-    for outcome in &mut outcomes {
-        if outcome.max_amp < QC_MIN_MAX_AMP {
+    for observation in &mut observations {
+        if observation.max_amp < QC_MIN_MAX_AMP {
             info!(
                 "[compute] sat {} ({}..{}) - max_amp {} too low, skipping",
-                outcome.sat_id, outcome.start_time, outcome.end_time, outcome.max_amp
+                observation.sat_id, observation.start_time, observation.end_time, observation.max_amp
             );
             continue;
         }
-        else if outcome.peak_to_mean() < QC_MIN_PEAK_TO_MEAN {
+        else if observation.peak_to_mean() < QC_MIN_PEAK_TO_MEAN {
             info!(
                 "[compute] sat {} ({}..{}) - peak/mean {} too low, skipping",
-                outcome.sat_id, outcome.start_time, outcome.end_time, outcome.peak_to_mean()
+                observation.sat_id, observation.start_time, observation.end_time, observation.peak_to_mean()
             );
             continue;
         }
 
         info!(
             "[compute] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {}",
-            outcome.sat_id, outcome.start_time, outcome.end_time,
-            outcome.max_amp, outcome.max_rh, outcome.mean_amp,
-            outcome.peak_to_mean(), outcome.num_recs
+            observation.sat_id, observation.start_time, observation.end_time,
+            observation.max_amp, observation.max_rh, observation.mean_amp,
+            observation.peak_to_mean(), observation.num_recs
         );
-        outcome.used = true;
-        rh_sum += outcome.max_rh;
+        observation.used = true;
+        rh_sum += observation.max_rh;
         used_count += 1;
     }
 
     let rh_mean = rh_sum / used_count as f32;
     let mut rh_std_sum: f32 = 0.0;
 
-    for outcome in &outcomes {
-        if !outcome.used {
+    for observation in &observations {
+        if !observation.used {
             continue;
         }
-        rh_std_sum += powf(outcome.max_rh - rh_mean, 2.0);
+        rh_std_sum += powf(observation.max_rh - rh_mean, 2.0);
     }
 
     let rh_std = sqrtf(rh_std_sum / used_count as f32);
+
+    let mut measurement = Measurement::new(queue.len() as u32, sector.get_start_time(), sector.get_end_time(), rh_mean, rh_std);
+
+    for observation in observations {
+        measurement.push(observation);
+    }
+
+    measurement_storage.store(&mut storage, 0, measurement);
 
     if used_count > 0 {
         info!(
@@ -357,7 +337,7 @@ pub async fn run_compute(sector: Sector, mut storage: BinStorage) {
         );
     } else {
         info!(
-            "[compute] no valid outcomes in {} ms",
+            "[compute] no valid observations in {} ms",
             (Instant::now() - total_start).as_millis()
         );
         return;
@@ -409,23 +389,6 @@ fn transform_xy(elevs: &SampleVec, snrs: &SampleVec, cf: f32, x: &mut SampleVec,
 }
 
 #[inline]
-fn sort_xy_by_x(x: &mut SampleVec, y: &mut SampleVec) {
-    let len = x.len();
-    if len < 2 { return; }
-    for i in 0..len {
-        let mut swapped = false;
-        for j in 0..(len - 1 - i) {
-            if x[j] > x[j + 1] {
-                x.swap(j, j + 1);
-                y.swap(j, j + 1);
-                swapped = true;
-            }
-        }
-        if !swapped { break; }
-    }
-}
-
-#[inline]
 fn ampl_stats(range: &RangeVec, ampl: &AmplVec) -> Option<(f32, f32, f32)> {
     let mut max = 0.0f32;
     let mut max_idx = 0usize;
@@ -454,12 +417,13 @@ fn ampl_stats(range: &RangeVec, ampl: &AmplVec) -> Option<(f32, f32, f32)> {
 /// Avoids building any `Burst` or `u32` buffers beyond `io_buf`.
 fn build_arc_queue(
     sector: &Sector,
-    storage: &mut BinStorage,
+    bin_storage: &BinStorage,
+    storage: &mut FlashStorage,
     io_buf: &mut [u8; BUF_BYTES],
 ) -> ArcQueue {
     let mut queue: ArcQueue = Vec::new();
 
-    for_each_record_in_sector(sector, storage, io_buf, |time, rec| {
+    for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
         let id = rec.get_id();
 
         // Find most recent arc for this id (search from end).
@@ -483,7 +447,8 @@ fn build_arc_queue(
 /// Returns (num_records_seen_for_arc, Some((net, band)) from first match).
 fn collect_arc_records(
     sector: &Sector,
-    storage: &mut BinStorage,
+    bin_storage: &BinStorage,
+    storage: &mut FlashStorage,
     io_buf: &mut [u8; BUF_BYTES],
     arc: Arc,
     times: &mut SampleVec,
@@ -493,7 +458,7 @@ fn collect_arc_records(
     let mut num: u32 = 0;
     let mut first: Option<(u8, bool)> = None;
 
-    for_each_record_in_sector(sector, storage, io_buf, |time, rec| {
+    for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
         if rec.get_id() == arc.id && time >= arc.start_time && time <= arc.end_time {
             if first.is_none() {
                 first = Some((rec.get_network(), rec.get_band()));
@@ -512,7 +477,8 @@ fn collect_arc_records(
 /// Calls `f(time, record)` for each record.
 fn for_each_record_in_sector<F>(
     sector: &Sector,
-    storage: &mut BinStorage,
+    bin_storage: &BinStorage,
+    storage: &mut FlashStorage,
     io_buf: &mut [u8; BUF_BYTES],
     mut f: F,
 ) where
@@ -521,7 +487,7 @@ fn for_each_record_in_sector<F>(
     let bins = sector.get_bins();
 
     for &bin_id in bins.iter() {
-        match storage.read(bin_id, io_buf) {
+        match bin_storage.read(storage, bin_id, io_buf) {
             Ok(_) => {
                 // Interpret as stream of little-endian u32 words.
                 let mut words = io_buf.chunks_exact(4);

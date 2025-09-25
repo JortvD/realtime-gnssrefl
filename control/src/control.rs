@@ -6,6 +6,7 @@ use embassy_rp::gpio::Output;
 use embassy_executor::Spawner;
 use embassy_time::{Instant, Timer};
 
+use crate::gnss::GNSSSensor;
 use crate::measure::run_measure;
 use crate::storage::{BinStorage, FlashStorage};
 use crate::types::{self, Sector};
@@ -15,14 +16,14 @@ use heapless::Vec;
 #[embassy_executor::task]
 pub async fn core0_task_control(
     spawner: Spawner,
-    uart_gps: Uart<'static, Async>,
+    gnss_sensor: GNSSSensor,
     uart_rockblock: Uart<'static, Async>,
     led: Output<'static>,
-    binstorage: BinStorage,) 
+    storage: FlashStorage) 
     {
 
     let config = types::Config::default();
-    let mut nmea_parser = NMEAParser::new(config);
+    let mut nmea_parser = NMEAParser::new(&config);
     let config = types::Config::default();
 
     let realtime = RealTime::new();
@@ -35,7 +36,7 @@ pub async fn core0_task_control(
         let next_startpoint = next_midpoint - &config.sector_measure_duration / 2;
         
         let start_bin_id = 0;
-        let n_bins = config.sector_measure_duration / binstorage.bin_time_size;
+        let n_bins = config.sector_measure_duration / config.seconds_per_bin;
         
         let sleeptime = next_startpoint - realtime.get_real_time();
         let timer_future = Timer::after_secs(sleeptime as u64);
