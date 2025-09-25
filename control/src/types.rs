@@ -33,8 +33,8 @@ impl Default for Config {
         midpoints.push(17).unwrap();
         midpoints.push(23).unwrap();
         Self {
-            pre_min_elevation: 5,
-            pre_max_elevation: 15,
+            pre_min_elevation: 10,
+            pre_max_elevation: 30,
             pre_min_azimuth: 50,
             pre_max_azimuth: 150,
             sector_measure_duration: 60 * 60 * 2,

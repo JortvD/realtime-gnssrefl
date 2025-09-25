@@ -70,13 +70,14 @@ async fn main(spawner: Spawner) {
     let mut led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
     // UART GPS
-    let config_uart_gps = uart::Config::default();
+    let mut config_uart_gps = uart::Config::default();
+    config_uart_gps.baudrate = 921_600;
     let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
 
     let storage = FlashStorage::new(p.FLASH, false);
     let bin_storage = storage::BinStorage::new(50, 240, storage);
 
-    let sector = Sector::new(0, 32022, 8, 1, 240, 50);
+    let sector = Sector::new(0, 45602, 30, 1, 240, 50);
 
 
     // info!("Data: {:?}", &data2[..]);

@@ -10,15 +10,15 @@ use crate::{
     types::{Sector, BIN_BURST_SIZE},
 };
 
-const QC_MIN_SAMPLES: u32 = 500;
-const QC_MIN_MAX_AMP: f32 = 250.0;
-const QC_MIN_PEAK_TO_MEAN: f32 = 2.7;
+const QC_MIN_SAMPLES: u32 = 1000;
+const QC_MIN_MAX_AMP: f32 = 500.0;
+const QC_MIN_PEAK_TO_MEAN: f32 = 3.0;
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
 const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SAT_SIZE * 4;
 
-const MIN_HEIGHT: f32 = 0.5;
+const MIN_HEIGHT: f32 = 2.0;
 const MAX_HEIGHT: f32 = 7.0;
 const STEP_SIZE: f32 = 0.05;
 
