@@ -2,10 +2,11 @@ use defmt::info;
 use embassy_time::Instant;
 use heapless::Vec;
 
+use crate::StorageType;
 use crate::{gnss::GNSSSensor, storage::{BinStorage, FlashStorage}, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
 
 #[embassy_executor::task]
-pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, mut storage: FlashStorage, config: Config) {
+pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, storage: &'static StorageType, config: Config) {
     let mut bin_storage = BinStorage::new(config.seconds_per_bin);
     let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_id();
@@ -40,7 +41,11 @@ pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, mut storag
         let bin_id = sector.get_bin_for_time(burst.time);
 
         if bin_id != last_bin_id {
-            bin_storage.write(&mut storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
+            {
+                let mut storage_lock = storage.lock().await;
+                let storage = storage_lock.as_mut().expect("Storage not initialized");
+                bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
+            }
             bin_data.clear();
             info!("[measure][{}] switched to new bin {}, wrote previous bin {} to storage", time_str.as_str(), bin_id, last_bin_id);
             last_bin_id = bin_id;
@@ -54,7 +59,11 @@ pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, mut storag
         info!("[measure][{}] burst added to cached bin {}, elapsed {} ms, cache size {} bytes", time_str.as_str(), bin_id, elapsed.as_millis(), bin_data.len());
     }
 
-    bin_storage.write(&mut storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
+    {
+        let mut storage_lock = storage.lock().await;
+        let storage = storage_lock.as_mut().expect("Storage not initialized");
+        bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
+    }
     bin_data.clear();
     info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
 }
