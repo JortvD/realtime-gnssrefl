@@ -3,7 +3,7 @@ use defmt::info;
 use embassy_time::Instant;
 use heapless::Vec;
 
-use crate::{rockblock::RockBlock, storage::{FlashStorage, MeasurementStorage}, types::NUM_MEASUREMENTS};
+use crate::{rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket {
     relative_height_mean: u16,
@@ -72,7 +72,7 @@ impl Packet {
 #[embassy_executor::task]
 pub async fn run_comms(
     mut rockblock: RockBlock,
-    mut storage: FlashStorage,
+    storage: &'static StorageType,
     index: u32,
     num_measurements: u32,
 ) {
@@ -86,7 +86,12 @@ pub async fn run_comms(
     let measurement_storage = MeasurementStorage::new();
 
     for i in 0..num_measurements {
-        let measurement = measurement_storage.read(&mut storage, (index + i) % NUM_MEASUREMENTS as u32);
+        let measurement: Option<Measurement>;
+        {
+            let mut storage_lock = storage.lock().await;
+            let storage = storage_lock.as_mut().expect("Storage not initialized");
+            measurement = measurement_storage.read(storage, (index + i) % NUM_MEASUREMENTS as u32);
+        }
         if measurement.is_none() {
             info!("[comms] No measurement found at location {}, skipping", (index + i) % NUM_MEASUREMENTS as u32);
             continue;
