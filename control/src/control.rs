@@ -9,6 +9,7 @@ use embassy_time::{Instant, Timer};
 use crate::gnss::GNSSSensor;
 use crate::measure::run_measure;
 use crate::storage::{BinStorage, FlashStorage};
+use crate::StorageType;
 use crate::types::{self, Sector};
 use crate::nmea::NMEAParser;
 use heapless::Vec;
@@ -19,7 +20,7 @@ pub async fn core0_task_control(
     gnss_sensor: GNSSSensor,
     uart_rockblock: Uart<'static, Async>,
     led: Output<'static>,
-    storage: FlashStorage) 
+    storage: &'static StorageType) 
     {
 
     let config = types::Config::default();

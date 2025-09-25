@@ -12,6 +12,8 @@ use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
 use embassy_rp::multicore::pause_core1;
 use embassy_rp::uart;
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Instant, Timer};
 use embassy_rp::uart::{Uart, Config};
 use gpio::{Level, Output};
@@ -73,6 +75,9 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
+type StorageType = Mutex<ThreadModeRawMutex, Option<FlashStorage>>;
+static STORAGE: StorageType = Mutex::new(None);
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Start of Control");
@@ -103,6 +108,10 @@ async fn main(spawner: Spawner) {
 
     let storage = FlashStorage::new(p.FLASH, false);
 
+    {
+        *(STORAGE.lock().await) = Some(storage);
+    }
+
     let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
     let mut rockblock = rockblock::RockBlock::new();
@@ -113,7 +122,7 @@ async fn main(spawner: Spawner) {
         gnss_sensor, 
         uart_rockblock, 
         led, 
-        storage)).unwrap();
+        &STORAGE)).unwrap();
 
     // Spawn core 1 task
     spawn_core1(
