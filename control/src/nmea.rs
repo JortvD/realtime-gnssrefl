@@ -4,8 +4,6 @@ use heapless::Vec;
 use crate::types::*;
 
 pub const BURST_SAT_SIZE: usize = 63;
-use crate::types::*;
-use defmt::info;
 
 const NETWORK_BITS: usize = 2;
 const ELEVATION_BITS: usize = 7;
@@ -191,7 +189,7 @@ impl NMEAParser {
             *value <<= BAND_BITS;
             *value += band;
 
-            if *num >= (BURST_SAT_SIZE - 1) as u32 {
+            if *num >= BURST_SAT_SIZE as u32 {
                 return None;
             }
 
