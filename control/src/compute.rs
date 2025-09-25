@@ -4,7 +4,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}
+    math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -91,7 +91,7 @@ impl Record {
 #[embassy_executor::task]
 pub async fn run_compute(
     sector: Sector, 
-    mut storage: FlashStorage,
+    storage: &'static StorageType,
     config: Config,
 ) {
     // One reusable IO buffer for the whole task (no per-call stack duplication).
@@ -100,8 +100,14 @@ pub async fn run_compute(
     let measurement_storage = MeasurementStorage::new();
     let mut io_buf = [0u8; BUF_BYTES];
 
+    let queue: ArcQueue;
+
     let start = Instant::now();
-    let queue = build_arc_queue(&sector, &bin_storage, &mut storage, &mut io_buf);
+    {
+        let mut storage_lock = storage.lock().await;
+        let storage = storage_lock.as_mut().expect("Storage not initialized");
+        queue = build_arc_queue(&sector, &bin_storage, storage, &mut io_buf);
+    }
     info!(
         "[compute] created queue with {} arcs in {} ms",
         queue.len(),
@@ -149,16 +155,21 @@ pub async fn run_compute(
 
         // Stream through storage and collect all records for this arc.
         let start = Instant::now();
-        let (num_records, first_net_band) = collect_arc_records(
-            &sector,
-            &bin_storage,
-            &mut storage,
-            &mut io_buf,
-            *arc,
-            &mut times,
-            &mut elevs,
-            &mut snrs,
-        );
+        let (num_records, first_net_band);
+        {
+            let mut storage_lock = storage.lock().await;
+            let storage = storage_lock.as_mut().expect("Storage not initialized");
+            (num_records, first_net_band) = collect_arc_records(
+                &sector,
+                &bin_storage,
+                storage,
+                &mut io_buf,
+                *arc,
+                &mut times,
+                &mut elevs,
+                &mut snrs,
+            );
+        }
         info!(
             "[compute][{:03}/{:03}] fetched {} records in {} ms",
             idx,
@@ -325,7 +336,11 @@ pub async fn run_compute(
         measurement.push(observation);
     }
 
-    measurement_storage.store(&mut storage, 0, measurement);
+    {
+        let mut storage_lock = storage.lock().await;
+        let storage = storage_lock.as_mut().expect("Storage not initialized");
+        measurement_storage.store(storage, 0, measurement);
+    }
 
     if used_count > 0 {
         info!(
