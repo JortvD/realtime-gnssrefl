@@ -27,6 +27,7 @@ mod storage;
 mod types;
 mod measure;
 mod compute;
+mod clock;
 
 use crate::compute::run_compute;
 use crate::measure::run_measure;
@@ -85,6 +86,7 @@ async fn main(spawner: Spawner) {
     // Spawn tasks
     // spawner.spawn(run_measure(uart_gps, nmea_parser, sector, bin_storage)).unwrap();
     spawner.spawn(run_compute(sector, bin_storage)).unwrap();
+    spawner.spawn(clock::clk_control()).unwrap();
     spawner.spawn(led_blink(led)).unwrap();
 }
 

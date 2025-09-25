@@ -15,6 +15,7 @@ embassy-executor = { version = "0.9.1", features = [
 ] }
 embassy-rp = { version = "0.8.0", features = [
   "defmt",
+  "unstable-pac",
   "time-driver",
   "critical-section-impl",
   "rp235xa",
