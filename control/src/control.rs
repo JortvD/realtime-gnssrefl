@@ -8,6 +8,7 @@ use embassy_time::{Instant, Timer};
 
 use crate::gnss::GNSSSensor;
 use crate::measure::run_measure;
+use crate::rockblock::RockBlock;
 use crate::storage::{BinStorage, FlashStorage};
 use crate::StorageType;
 use crate::types::{self, Sector};
@@ -18,7 +19,7 @@ use heapless::Vec;
 pub async fn core0_task_control(
     spawner: Spawner,
     gnss_sensor: GNSSSensor,
-    uart_rockblock: Uart<'static, Async>,
+    rockblock: RockBlock,
     led: Output<'static>,
     storage: &'static StorageType) 
     {

@@ -1,10 +1,14 @@
 use defmt::info;
 
-pub struct RockBlock;
+use embassy_rp::uart;
+
+pub struct RockBlock{
+    uart: uart::Uart<'static, uart::Async>,
+}
 
 impl RockBlock {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(uart: uart::Uart<'static, uart::Async>) -> Self {
+        Self {uart}
     }
 
     pub async fn send_data(&mut self, data: &[u8]) -> Result<(), ()> {

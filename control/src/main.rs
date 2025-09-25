@@ -50,6 +50,7 @@ use crate::gnss::GNSSSensor;
 use crate::control::core0_task_control;
 use crate::control::core1_task_control;
 use crate::measure::run_measure;
+use crate::rockblock::RockBlock;
 use crate::storage::FlashStorage;
 use crate::types::*;
 
@@ -105,6 +106,7 @@ async fn main(spawner: Spawner) {
     let mut config_uart_rockblock = uart::Config::default();
     config_uart_rockblock.baudrate = 921_600;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
+    let mut rockblock = RockBlock::new(uart_rockblock);
 
     let storage = FlashStorage::new(p.FLASH, false);
 
@@ -114,13 +116,11 @@ async fn main(spawner: Spawner) {
 
     let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
-    let mut rockblock = rockblock::RockBlock::new();
-
     // Spawn core 0 task
     spawner.spawn(core0_task_control(
         spawner,
         gnss_sensor, 
-        uart_rockblock, 
+        rockblock, 
         led, 
         &STORAGE)).unwrap();
 
