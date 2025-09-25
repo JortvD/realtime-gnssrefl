@@ -94,8 +94,8 @@ impl FlashStorage {
 }
 
 pub struct BinStorage {
-    n_bins: u32,
-    bin_time_size: u32,
+    pub n_bins: u32,
+    pub bin_time_size: u32,
     storage: FlashStorage,
 }
 
