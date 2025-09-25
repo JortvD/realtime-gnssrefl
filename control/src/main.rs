@@ -10,6 +10,7 @@ use embassy_executor::Spawner;
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
+use embassy_rp::multicore::pause_core1;
 use embassy_rp::uart;
 use embassy_time::{Instant, Timer};
 use embassy_rp::uart::{Uart, Config};
@@ -28,8 +29,16 @@ mod types;
 mod measure;
 mod compute;
 mod clock;
+mod utils;
+mod get_time;
+mod gnss;
+mod comms;
+mod rockblock;
 
+use crate::comms::run_comms;
 use crate::compute::run_compute;
+use crate::get_time::get_time;
+use crate::gnss::GNSSSensor;
 use crate::measure::run_measure;
 use crate::storage::FlashStorage;
 use crate::types::*;
@@ -62,7 +71,6 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(config);
 
     let config = types::Config::default();
-    let mut nmea_parser = nmea::NMEAParser::new(config);
 
     let sys_freq = clk_sys_freq();
     info!("System clock frequency: {} MHz", sys_freq / 1_000_000);
@@ -70,24 +78,29 @@ async fn main(spawner: Spawner) {
     // GPIOS
     let mut led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
-    // UART GPS
-    let mut config_uart_gps = uart::Config::default();
-    config_uart_gps.baudrate = 921_600;
-    let uart_gps = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, config_uart_gps);
+    // UART GNSS
+    let mut gnss_uart_config = uart::Config::default();
+    gnss_uart_config.baudrate = 921_600;
+    let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
+    let mut gnss_sensor = GNSSSensor::new(gnss_uart, &config);
 
     let storage = FlashStorage::new(p.FLASH, false);
-    let bin_storage = storage::BinStorage::new(50, 240, storage);
 
-    let sector = Sector::new(0, 45602, 30, 1, 240, 50);
+    let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
+    let mut rockblock = rockblock::RockBlock::new();
 
-    // info!("Data: {:?}", &data2[..]);
+    // let time = get_time(&mut gnss_sensor).await;
+    // info!("Current time is {}", time);
+
+    // pause_core1();
 
     // Spawn tasks
-    // spawner.spawn(run_measure(uart_gps, nmea_parser, sector, bin_storage)).unwrap();
-    spawner.spawn(run_compute(sector, bin_storage)).unwrap();
-    spawner.spawn(clock::clk_control()).unwrap();
-    spawner.spawn(led_blink(led)).unwrap();
+    // spawner.spawn(run_measure(gnss_sensor, sector, bin_storage)).unwrap();
+    // spawner.spawn(run_compute(sector, storage, config)).unwrap();
+    spawner.spawn(run_comms(rockblock, storage, 0, 1)).unwrap();
+    // spawner.spawn(clock::clk_control()).unwrap();
+    // spawner.spawn(led_blink(led)).unwrap();
 }
 
 
