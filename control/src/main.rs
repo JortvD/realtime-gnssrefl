@@ -10,7 +10,6 @@ use embassy_executor::Spawner;
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
-use embassy_rp::multicore::pause_core1;
 use embassy_rp::uart;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -25,6 +24,8 @@ use embassy_rp::multicore::Stack;
 use static_cell::StaticCell;
 use embassy_rp::multicore::spawn_core1;
 use embassy_executor::Executor;
+use embassy_sync::channel::Channel;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use heapless::Vec;
 
 use {defmt_rtt as _, panic_probe as _};
@@ -43,19 +44,26 @@ mod gnss;
 mod comms;
 mod rockblock;
 
-use crate::comms::run_comms;
-use crate::compute::run_compute;
+use crate::comms::task_comms;
+use crate::compute::task_compute;
+use crate::control::task_control;
+use crate::control::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
 use crate::get_time::get_time;
 use crate::gnss::GNSSSensor;
-use crate::control::core0_task_control;
-use crate::control::core1_task_control;
-use crate::measure::run_measure;
+use crate::measure::task_measure;
 use crate::rockblock::RockBlock;
 use crate::storage::FlashStorage;
 use crate::types::*;
 
+
 static mut CORE1_STACK: Stack<4096> = Stack::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
+static MEASURE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, MeasureReqMsg, 8> = Channel::new();
+static COMPUTE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, ComputeReqMsg, 8> = Channel::new();
+static COMM_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, CommReqMsg, 8> = Channel::new();
+static MEASURE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MeasureResMsg, 8> = Channel::new();
+static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg, 8> = Channel::new();
+static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
@@ -88,8 +96,6 @@ async fn main(spawner: Spawner) {
     config.clocks = ClockConfig::system_freq(150_000_000).unwrap();
     let p = embassy_rp::init(config);
 
-    let config = types::Config::default();
-
     let sys_freq = clk_sys_freq();
     info!("System clock frequency: {} MHz", sys_freq / 1_000_000);
     
@@ -100,13 +106,13 @@ async fn main(spawner: Spawner) {
     let mut gnss_uart_config = uart::Config::default();
     gnss_uart_config.baudrate = 921_600;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
-    let mut gnss_sensor = GNSSSensor::new(gnss_uart, &config);
+    let gnss_sensor = GNSSSensor::new(gnss_uart, types::Config::default());
 
     // UART Rockblock
     let mut config_uart_rockblock = uart::Config::default();
     config_uart_rockblock.baudrate = 921_600;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
-    let mut rockblock = RockBlock::new(uart_rockblock);
+    let rockblock = RockBlock::new(uart_rockblock);
 
     let storage = FlashStorage::new(p.FLASH, false);
 
@@ -114,24 +120,40 @@ async fn main(spawner: Spawner) {
         *(STORAGE.lock().await) = Some(storage);
     }
 
-    let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
+    //let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
-    // Spawn core 0 task
-    spawner.spawn(core0_task_control(
-        spawner,
-        gnss_sensor, 
-        rockblock, 
-        led, 
-        &STORAGE)).unwrap();
+    // Spawn core 0 tasks
+    spawner.spawn(task_control(
+        &MEASURE_REQUEST_CHANNEL,
+        &COMPUTE_REQUEST_CHANNEL,
+        &COMM_REQUEST_CHANNEL,
+        &MEASURE_RESPONSE_CHANNEL,
+        &COMPUTE_RESPONSE_CHANNEL,
+        &COMM_RESPONSE_CHANNEL,
+        
+    )).unwrap();
+    spawner.spawn(task_measure(
+        &MEASURE_REQUEST_CHANNEL,
+        &MEASURE_RESPONSE_CHANNEL,
+         &STORAGE, 
+         gnss_sensor)).unwrap();
 
-    // Spawn core 1 task
+    // Spawn core 1 tasks
     spawn_core1(
         p.CORE1,
         unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.spawn(core1_task_control(spawner)).unwrap();
+                spawner.spawn(task_compute(
+                    &COMPUTE_REQUEST_CHANNEL, 
+                    &COMPUTE_RESPONSE_CHANNEL, 
+                    &STORAGE)).unwrap();
+                spawner.spawn(task_comms(
+                    &COMM_REQUEST_CHANNEL, 
+                    &COMM_RESPONSE_CHANNEL,
+                    &STORAGE,
+                    rockblock)).unwrap();
             });
         },
     );

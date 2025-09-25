@@ -9,7 +9,7 @@ pub struct GNSSSensor {
 }
 
 impl GNSSSensor {
-    pub fn new(uart: uart::Uart<'static, uart::Async>, config: &Config) -> Self {
+    pub fn new(uart: uart::Uart<'static, uart::Async>, config: Config) -> Self {
         Self { uart, parser: NMEAParser::new(&config) }
     }
 

@@ -1,10 +1,11 @@
 use defmt::info;
 use embassy_time::Instant;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}, StorageType
+    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -89,7 +90,16 @@ impl Record {
 }
 
 #[embassy_executor::task]
-pub async fn run_compute(
+pub async fn task_compute(
+    channel_req: &'static Channel<CriticalSectionRawMutex, ComputeReqMsg, 8>,
+    channel_res: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
+    storage: &'static StorageType,
+) {
+    //TODO Listen to channel request
+    run_compute(sector, storage, config);
+}
+
+async fn run_compute(
     sector: Sector, 
     storage: &'static StorageType,
     config: Config,

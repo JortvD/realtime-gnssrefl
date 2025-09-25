@@ -1,9 +1,10 @@
 
 use defmt::info;
 use embassy_time::Instant;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket {
     relative_height_mean: u16,
@@ -69,8 +70,19 @@ impl Packet {
     }
 }
 
+
 #[embassy_executor::task]
-pub async fn run_comms(
+pub async fn task_comms(
+    channel_req: &'static Channel<CriticalSectionRawMutex, CommReqMsg, 8>,
+    channel_res: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
+    storage: &'static StorageType,
+    rockblock: RockBlock,
+) {
+    // TODO: Listen to channel requests
+    run_comms(rockblock, storage, index, num_measurements);
+}
+
+async fn run_comms(
     mut rockblock: RockBlock,
     storage: &'static StorageType,
     index: u32,

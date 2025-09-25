@@ -1,12 +1,35 @@
 use defmt::info;
 use embassy_time::Instant;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
+use crate::control::{MeasureReqMsg, MeasureResMsg};
 use crate::StorageType;
 use crate::{gnss::GNSSSensor, storage::{BinStorage, FlashStorage}, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
 
 #[embassy_executor::task]
-pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, storage: &'static StorageType, config: Config) {
+pub async fn task_measure(
+    channel_req: &'static Channel<CriticalSectionRawMutex, MeasureReqMsg, 8>, 
+    channel_res: &'static Channel<CriticalSectionRawMutex, MeasureResMsg, 8>, 
+    storage: &'static StorageType,
+    mut gnss_sensor: GNSSSensor
+) {
+    // Get sector & config
+    loop {
+        match channel_req.receive().await {
+            MeasureReqMsg::GetRefTime => {
+                let reftime = get_time(gnss_sensor).await;
+                channel_res.send(MeasureResMsg::GiveRefTime { reftime: reftime });
+            }
+            MeasureReqMsg::MeasureSector { sector, config } => {
+                run_measure(gnss_sensor, storage, sector, config);
+            }
+        }
+    }
+    
+}
+
+async fn run_measure(mut gnss_sensor: GNSSSensor, storage: &'static StorageType, sector: Sector, config: Config) {
     let mut bin_storage = BinStorage::new(config.seconds_per_bin);
     let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_id();
@@ -66,4 +89,10 @@ pub async fn run_measure(mut gnss_sensor: GNSSSensor, sector: Sector, storage: &
     }
     bin_data.clear();
     info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
+}
+
+pub async fn get_time(mut gnss_sensor: GNSSSensor) -> u32 {
+    let nmeaburst = gnss_sensor.read_burst().await;
+    let burst = gnss_sensor.parser.parse_burst(&nmeaburst);
+    burst.time
 }
