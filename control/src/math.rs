@@ -339,3 +339,74 @@ pub fn polyfit_and_smooth_no_std(x: &[f32], y: &mut [f32]) -> usize {
 
     eff_deg
 }
+
+
+use core::cmp::Ordering;
+
+#[inline]
+fn lt(a: f32, b: f32) -> bool {
+    a.total_cmp(&b) == Ordering::Less
+}
+
+fn insertion_sort_xy(x: &mut [f32], y: &mut [f32]) {
+    for i in 1..x.len() {
+        let mut j = i;
+        while j > 0 && lt(x[j], x[j - 1]) {
+            x.swap(j, j - 1);
+            y.swap(j, j - 1);
+            j -= 1;
+        }
+    }
+}
+
+fn median3_idx(x: &[f32], a: usize, b: usize, c: usize) -> usize {
+    let (va, vb, vc) = (x[a], x[b], x[c]);
+    if lt(va, vb) {
+        if lt(vb, vc) { b } else if lt(va, vc) { c } else { a }
+    } else {
+        if lt(va, vc) { a } else if lt(vb, vc) { c } else { b }
+    }
+}
+
+fn partition_xy(x: &mut [f32], y: &mut [f32], pivot_idx: usize) -> usize {
+    let len = x.len();
+    x.swap(pivot_idx, len - 1);
+    y.swap(pivot_idx, len - 1);
+    let pivot = x[len - 1];
+
+    let mut store = 0;
+    for i in 0..(len - 1) {
+        if lt(x[i], pivot) {
+            x.swap(i, store);
+            y.swap(i, store);
+            store += 1;
+        }
+    }
+    x.swap(store, len - 1);
+    y.swap(store, len - 1);
+    store
+}
+
+pub fn quicksort_xy(x: &mut [f32], y: &mut [f32]) {
+    const INSERTION_THRESHOLD: usize = 16;
+
+    let len = x.len();
+    if len <= 1 { return; }
+    if len <= INSERTION_THRESHOLD {
+        insertion_sort_xy(x, y);
+        return;
+    }
+
+    // Median-of-three pivot (first, middle, last)
+    let pidx = median3_idx(x, 0, len / 2, len - 1);
+    let pivot_at = partition_xy(x, y, pidx);
+
+    // Recurse on left and right (skip pivot)
+    let (xl, xr) = x.split_at_mut(pivot_at);
+    let (yl, yr) = y.split_at_mut(pivot_at);
+
+    quicksort_xy(xl, yl);
+    if xr.len() > 1 {
+        quicksort_xy(&mut xr[1..], &mut yr[1..]);
+    }
+}

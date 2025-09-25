@@ -1,5 +1,6 @@
 use core::str::Split;
 
+use embassy_time::Duration;
 use heapless::Vec;
 use crate::types::*;
 
@@ -13,8 +14,65 @@ const BAND_BITS: usize = 1;
 
 const NUM_BITS: usize = 8;
 
-fn is_command(word: &str, command: &str) -> bool {
-    word.starts_with('$') && word.len() == 6 && &word[3..6] == command
+pub struct NmeaBurst {
+    pub lines: Vec<Nmealine, NMEA_MAX_LINES>,
+    pub bytes: u32,
+    pub duration: Duration,
+}
+
+impl NmeaBurst {
+    pub fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            bytes: 0,
+            duration: Duration::from_millis(0),
+        }
+    }
+
+    pub fn push(&mut self, line: Nmealine) {
+        self.lines.push(line).ok();
+    }
+
+    pub fn last(&self) -> Option<&Nmealine> {
+        self.lines.last()
+    }
+}
+
+pub struct Burst {
+    pub time: u32,
+    pub num: u32,
+    pub samples: Vec<Sample, BURST_SAT_SIZE>,
+}
+
+impl Burst {
+    pub fn new() -> Self {
+        Self {
+            time: 0,
+            num: 0,
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, sample: Sample) -> Result<(), ()> {
+        self.samples.push(sample).map_err(|_| ())
+    }
+    
+    pub fn to_bytes(&self) -> Vec<u8, {4 * BURST_SIZE}> {
+        let mut data = Vec::<u8, {4 * BURST_SIZE}>::new();
+
+        for sample in self.samples.iter() {
+            let byte0 = (*sample & 0xFF) as u8;
+            let byte1 = ((*sample >> 8) & 0xFF) as u8;
+            let byte2 = ((*sample >> 16) & 0xFF) as u8;
+            let byte3 = ((*sample >> 24) & 0xFF) as u8;
+            data.push(byte0).unwrap();
+            data.push(byte1).unwrap();
+            data.push(byte2).unwrap();
+            data.push(byte3).unwrap();
+        }
+
+        data
+    }
 }
 
 pub struct NMEAParser {
@@ -22,18 +80,18 @@ pub struct NMEAParser {
 }
 
 impl NMEAParser {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(config: &Config) -> Self {
+        Self { config: config.clone() }
     }
 
-    pub fn parse_burst(&mut self, lines: &NmeaBurst) -> (Burst, u32, u32) {
+    pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst) -> Burst {
         let mut current_gps_time = u32::MAX;
-        let mut values = Burst::new();
+        let mut burst = Burst::new();
         let mut num: u32 = 0;
 
-        values.push(0).ok();
+        burst.push(0).ok();
 
-        for line in lines {
+        for line in &nmeaburst.lines {
             // Split only by ',' to match the expected type for parse_gga
             let mut it = line.split(',');
 
@@ -42,23 +100,25 @@ impl NMEAParser {
                 None => "",
             };
 
-            if is_command(command, "GGA") {
+            if self.is_command(command, "GGA") {
                 current_gps_time = match self.parse_gga(it) {
                     Some(t) => t,
                     None => current_gps_time,
                 }
             }
-            else if is_command(command, "GSV") {
-                self.parse_gsv(it, command, &mut values, &mut num);
+            else if self.is_command(command, "GSV") {
+                self.parse_gsv(it, command, &mut burst.samples, &mut num);
             }
         }
 
         let mut header = current_gps_time;
         header <<= NUM_BITS;
         header += num;
-        values[0] = header;
+        burst.samples[0] = header;
+        burst.time = current_gps_time;
+        burst.num = num;
 
-        (values, current_gps_time, num)
+        burst
     }
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {
@@ -108,7 +168,11 @@ impl NMEAParser {
         }
     }
 
-    fn parse_gsv<'a>(&mut self, mut it: Split<'a, char>, command: &str, values: &mut Burst, num: &mut u32) -> Option<()> {
+    fn is_command(&self, word: &str, command: &str) -> bool {
+        word.starts_with('$') && word.len() == 6 && &word[3..6] == command
+    }
+
+    fn parse_gsv<'a>(&mut self, mut it: Split<'a, char>, command: &str, values: &mut Vec<Sample, BURST_SAT_SIZE>, num: &mut u32) -> Option<()> {
         let network = match self.command_to_network(command) {
             Some(t) => t,
             None => return None
