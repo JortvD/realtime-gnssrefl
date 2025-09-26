@@ -18,19 +18,25 @@ pub async fn task_measure(
     loop {
         match channel_req.receive().await {
             MeasureReqMsg::GetRefTime => {
-                let reftime = get_time(gnss_sensor).await;
-                channel_res.send(MeasureResMsg::GiveRefTime { reftime: reftime });
+                {
+                    let reftime = get_time(&mut gnss_sensor).await;
+                    channel_res.send(MeasureResMsg::GiveRefTime { reftime: reftime }).await;
+                }
             }
             MeasureReqMsg::MeasureSector { sector, config } => {
-                run_measure(gnss_sensor, storage, sector, config);
+                {
+                    run_measure(&mut gnss_sensor, storage, &sector, &config).await;
+                    channel_res.send(MeasureResMsg::SectorSuccesful { sector }).await;
+                }
             }
+            
         }
     }
     
 }
 
-async fn run_measure(mut gnss_sensor: GNSSSensor, storage: &'static StorageType, sector: Sector, config: Config) {
-    let mut bin_storage = BinStorage::new(config.seconds_per_bin);
+async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) {
+    let bin_storage = BinStorage::new(config.seconds_per_bin);
     let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_id();
 
@@ -91,7 +97,7 @@ async fn run_measure(mut gnss_sensor: GNSSSensor, storage: &'static StorageType,
     info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
 }
 
-pub async fn get_time(mut gnss_sensor: GNSSSensor) -> u32 {
+pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> u32 {
     let nmeaburst = gnss_sensor.read_burst().await;
     let burst = gnss_sensor.parser.parse_burst(&nmeaburst);
     burst.time

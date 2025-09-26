@@ -23,6 +23,7 @@ embassy-rp = { version = "0.8.0", features = [
 ] }
 embassy-sync = "0.6.2"
 embassy-time = "0.5.0"
+embassy-futures = "0.1.2"
 fletcher = "1.0.0"
 heapless = "0.9.1"
 libm = "0.2.15"
