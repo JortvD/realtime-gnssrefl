@@ -46,6 +46,8 @@ pub struct Config {
 
     pub bins_per_sector: u32,
     pub seconds_per_bin: u32,
+
+    pub num_send_measurements: u32,
 }
 
 impl Default for Config {
@@ -65,10 +67,13 @@ impl Default for Config {
 
             bins_per_sector: 30,
             seconds_per_bin: 240,
+
+            num_send_measurements: 3,
         }
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Sector {
     index: u32,
     start_bin_id: u32,

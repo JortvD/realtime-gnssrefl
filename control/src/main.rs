@@ -39,7 +39,6 @@ mod compute;
 mod clock;
 mod control;
 mod utils;
-mod get_time;
 mod gnss;
 mod comms;
 mod rockblock;
@@ -48,7 +47,6 @@ use crate::comms::task_comms;
 use crate::compute::task_compute;
 use crate::control::task_control;
 use crate::control::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
-use crate::get_time::get_time;
 use crate::gnss::GNSSSensor;
 use crate::measure::task_measure;
 use crate::rockblock::RockBlock;
@@ -154,18 +152,19 @@ async fn main(spawner: Spawner) {
                     &COMM_RESPONSE_CHANNEL,
                     &STORAGE,
                     rockblock)).unwrap();
+                spawner.spawn(led_blink(led)).unwrap();
             });
         },
     );
 }
 
 
-// #[embassy_executor::task]
-// async fn led_blink(mut led: Output<'static>) {
-//     loop {
-//         led.set_high();
-//         Timer::after_millis(25).await;
-//         led.set_low();
-//         Timer::after_millis(25).await;
-//     }
-// }
+#[embassy_executor::task]
+async fn led_blink(mut led: Output<'static>) {
+    loop {
+        led.set_high();
+        Timer::after_millis(25).await;
+        led.set_low();
+        Timer::after_millis(25).await;
+    }
+}

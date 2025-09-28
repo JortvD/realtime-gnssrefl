@@ -1,19 +1,8 @@
 
 use core::u32;
 
-use embassy_rp::config;
-use embassy_time::Duration;
-
-use embassy_rp::uart::{Uart, Async};
-use embassy_rp::gpio::Output;
-use embassy_executor::Spawner;
 use embassy_time::{Instant, Timer};
-
-use crate::gnss::GNSSSensor;
-use crate::rockblock::RockBlock;
-use crate::storage::{BinStorage, FlashStorage};
-use crate::types::{self, Config, Sector};
-use crate::nmea::NMEAParser;
+use crate::types::{self, Config, Sector, NUM_MEASUREMENTS};
 use crate::NUM_BINS;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
@@ -34,21 +23,48 @@ pub async fn task_control(
 
     let config = types::Config::default();
     let mut realtime = RealTime::new();
-    let mut list_measured: Deque<Sector, 8> = Deque::new();
-    let mut list_computed: Deque<u32, 8> = Deque::new();
-    let mut next_timer_future = Timer::after_secs(u32::max_value() as u64);
-    let mut next_sector = Sector::new(0,0,0,0,0 );
 
-    // Start the control getting a reference time
-    measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
+    // List of tasks
+    let mut realtime_available = false;
+    let mut sector: Deque<Sector, 1> = Deque::new();
+    let mut list_measured: Deque<Sector, 8> = Deque::new();
+    let mut list_computed: Deque<Sector, 8> = Deque::new();
+
+    let mut next_sector: Deque<Sector, 1> = Deque::new();
+    let mut next_timer_future = Timer::after_secs(u32::max_value() as u64);
+
+    let mut core0busy = false;
+    let mut core1busy = false;
 
     // TODO: Fill list_measured and list_computed from memory. 
     // This is for if there are still pending tasks from before power down
     
     loop {
-        //TODO: Send out tasks if possible
+        // Send task to Core 0 if available (get reference time or measure)
+        if !core0busy {
+            if !realtime_available {
+                measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
+                core0busy = true;
+            } else
+            if let Some(sector) = sector.front() {
+                measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: sector.clone(), config: config.clone() }).await;
+                core0busy = true;
+            }
+        }
 
-        //Wait for responses
+        // Send task to Core 1 if available (compute or communicate)
+        if !core1busy {
+            if let Some(sector) = list_measured.front() {
+                compute_request_channel.send(ComputeReqMsg::Compute { sector: sector.clone(), config: config.clone() }).await;
+                core1busy = true;
+            } else
+            if let Some(sector) = list_computed.front() {
+                comm_request_channel.send(CommReqMsg::Send { sector: sector.clone(), config: config.clone()}).await;
+                core1busy = true;
+            }
+        }
+
+        // Wait for responses
         let result = select4(
         &mut next_timer_future,
         measure_response_channel.receive(),
@@ -57,30 +73,49 @@ pub async fn task_control(
         ).await;
         match result {
             Either4::First(_) => {
-                measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: next_sector, config: config.clone()}).await;
-                next_sector_timer(&config, &realtime); 
+                sector.push_back(next_sector.pop_front().unwrap()).unwrap();
             }
             Either4::Second(measure_res_msg) => {
                 match measure_res_msg {
                     MeasureResMsg::GiveRefTime { reftime} => {
                         realtime.update_ref_time(reftime);
-                        (next_sector, next_timer_future) = next_sector_timer(&config, &realtime);
+                        realtime_available = true;
+                        let (ns, ntf) = next_sector_timer(&config, &realtime);
+                        next_sector.push_front(ns).unwrap();
+                        next_timer_future = ntf;
+                        core0busy = false;
                     },
-                    MeasureResMsg::SectorSuccesful { sector } => {
-                        list_measured.push_back(sector);
+                    MeasureResMsg::SectorSuccess { } => {
+                        let sector = sector.pop_front().unwrap();
+                        list_measured.push_back(sector).unwrap();
+                        let (ns, ntf) = next_sector_timer(&config, &realtime);
+                        next_sector.push_front(ns).unwrap();
+                        next_timer_future = ntf;
+                        core0busy = false;
                     },
                     _ => {}
                 }
             }
             Either4::Third(compute_res_msg) => {
-                // TODO: Push compute sector index to list
-                // Remove sector from measured
+                match compute_res_msg {
+                    ComputeResMsg::Success => {
+                        let sector = list_measured.pop_front().unwrap();
+                        list_computed.push_back(sector).unwrap();
+                        core1busy = false;
+                    }
+                    _ => {}
+                }
             }
             Either4::Fourth(comm_res_msg) => {
-                // TODO: Remove sectorindex from compute list 
+                match comm_res_msg {
+                    CommResMsg::Success => {
+                        list_computed.pop_front().unwrap();
+                        core1busy = false;
+                    }
+                    _ => {}
+                }
             }
         }
-            
     }
 }
 
@@ -90,37 +125,38 @@ pub enum MeasureReqMsg {
         sector: Sector,
         config: Config,
     }
-    //TODO: UpdateConfig
 }
 
 pub enum MeasureResMsg {
     GiveRefTime {
         reftime: u32
     },
-    SectorSuccesful{
-        sector: Sector,
-    },
+    SectorSuccess,
     SectorFail, 
 }
 
 pub enum ComputeReqMsg {
-    // TODO: Add requests
-    letsgo {}
+    Compute {
+        sector: Sector,
+        config: Config,
+    }
 }
 
 pub enum ComputeResMsg {
-    // TODO: Add responses
-    letsgo {}
+    Success,
+    Fail 
 }
 
 pub enum CommReqMsg{
-    // TODO: Add requests
-    letsgo {}
+    Send {
+        sector: Sector,
+        config: Config,
+    }
 }
 
 pub enum CommResMsg{
-    // TODO: Add responses
-    letsgo {}
+    Success,
+    Fail
 }
 
 struct RealTime {
@@ -165,24 +201,27 @@ impl RealTime {
     }
 }
 
-
 fn next_sector_timer<'a>(
     config: &Config,
     realtime: &RealTime,
 ) -> (Sector, Timer) {
-    let sectors_per_day = config.sector_midpoints.len();
+    let sectors_per_day = config.sector_midpoints.len() as u32;
 
-    //TODO: find next startpoint instead of midpoint
+    //TODO: find next startpoint instead of midpoint or risk finding a starttime in the past
     // Find the next midpoint and its index
-    let (midpoint, sector_index) =
+    let (midpoint, nth_of_day) =
         RealTime::next_or_min(&config.sector_midpoints, realtime.get_real_time());
 
     // Compute sector start time
     let start_time = RealTime::subtract_wrapping(midpoint, config.sector_measure_duration / 2);
 
+    // Compute sector index
+    let sector_index = (realtime.get_days() * sectors_per_day 
+        + nth_of_day as u32) % NUM_MEASUREMENTS as u32;
+
     // Compute bin range
     let start_bin_id = (realtime.get_days() * sectors_per_day as u32
-        + sector_index as u32 * config.bins_per_sector)
+        + nth_of_day as u32 * config.bins_per_sector)
         % NUM_BINS as u32;
     let n_bins = config.bins_per_sector;
 

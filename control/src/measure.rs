@@ -26,7 +26,7 @@ pub async fn task_measure(
             MeasureReqMsg::MeasureSector { sector, config } => {
                 {
                     run_measure(&mut gnss_sensor, storage, &sector, &config).await;
-                    channel_res.send(MeasureResMsg::SectorSuccesful { sector }).await;
+                    channel_res.send(MeasureResMsg::SectorSuccess).await;
                 }
             }
             

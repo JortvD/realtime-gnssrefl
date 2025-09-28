@@ -95,8 +95,12 @@ pub async fn task_compute(
     channel_res: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
     storage: &'static StorageType,
 ) {
-    //TODO Listen to channel request
-    run_compute(sector, storage, config);
+    match channel_req.receive().await {
+        ComputeReqMsg::Compute { sector, config } => {
+            run_compute(sector, storage, config).await;
+            channel_res.send(ComputeResMsg::Success).await;
+        }
+    }
 }
 
 async fn run_compute(
@@ -349,7 +353,7 @@ async fn run_compute(
     {
         let mut storage_lock = storage.lock().await;
         let storage = storage_lock.as_mut().expect("Storage not initialized");
-        measurement_storage.store(storage, 0, measurement);
+        measurement_storage.store(storage, sector.get_index(), measurement);
     }
 
     if used_count > 0 {

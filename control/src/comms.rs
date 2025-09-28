@@ -4,7 +4,7 @@ use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, Sector, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket {
     relative_height_mean: u16,
@@ -78,14 +78,18 @@ pub async fn task_comms(
     storage: &'static StorageType,
     rockblock: RockBlock,
 ) {
-    // TODO: Listen to channel requests
-    run_comms(rockblock, storage, index, num_measurements);
+    match channel_req.receive().await {
+        CommReqMsg::Send { sector, config } => {
+            run_comms(rockblock, storage, sector, config.num_send_measurements).await;
+            channel_res.send(CommResMsg::Success).await;
+        }
+    }
 }
 
 async fn run_comms(
     mut rockblock: RockBlock,
     storage: &'static StorageType,
-    index: u32,
+    sector: Sector,
     num_measurements: u32,
 ) {
     let mut packet = Packet::new(
@@ -102,14 +106,14 @@ async fn run_comms(
         {
             let mut storage_lock = storage.lock().await;
             let storage = storage_lock.as_mut().expect("Storage not initialized");
-            measurement = measurement_storage.read(storage, (index + i) % NUM_MEASUREMENTS as u32);
+            measurement = measurement_storage.read(storage, (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
         }
         if measurement.is_none() {
-            info!("[comms] No measurement found at location {}, skipping", (index + i) % NUM_MEASUREMENTS as u32);
+            info!("[comms] No measurement found at location {}, skipping", (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
             continue;
         }
         let measurement = measurement.unwrap();
-        info!("[comms] Read measurement at location {} with {} observations, mean {}, std {}", (index + i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
+        info!("[comms] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
         let packet_measurement = MeasurementPacket::new(
             mean_f32_to_u16(measurement.mean, 20.0),
             std_f32_to_u8(measurement.std, 1.0),
