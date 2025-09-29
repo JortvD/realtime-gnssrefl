@@ -1,10 +1,11 @@
 
 use defmt::info;
-use embassy_time::Instant;
+use embassy_futures::select::{select, Either};
+use embassy_time::{Duration, Instant, Timer};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::RockBlock, storage::MeasurementStorage, types::{Measurement, Sector, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket {
     relative_height_mean: u16,
@@ -80,10 +81,40 @@ pub async fn task_comms(
 ) {
     loop {
         info!("[comm]: Wait for request");
-        match channel_req.receive().await {
-            CommReqMsg::Send { sector, config } => {
+        info!("running1");
+        // rockblock.send_data(&[0,1,2]).await.expect("123");
+        Timer::after(Duration::from_millis(100)).await;
+        let select = select(
+            channel_req.receive(), 
+            rockblock.receive()
+        ).await;
+        info!("running2");
+        match select {
+            Either::First(CommReqMsg::Send { sector, config }) => {
                 run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
                 channel_res.send(CommResMsg::Success).await;
+            }
+            Either::Second(command) => {
+                match command.ok().expect("msg") {
+                    RockBlockCommand::DMP1 => dump_bin_storage(&mut rockblock, storage).await,
+                    _ => {},
+                }
+            }
+        }
+    }
+}
+
+async fn dump_bin_storage(rockblock: &mut RockBlock, storage: &'static StorageType) {
+    {
+        let mut storage_lock = storage.lock().await;
+            let storage = storage_lock.as_mut().expect("Storage not initialized");
+        for bin in 0..NUM_BINS {
+            for block in 0..NUM_CONTAINER_BLOCKS {
+                let mut io_buf = [0u8; 4096];
+
+                storage.read(bin, block as u32 * 4096, &mut io_buf).expect("");
+
+                rockblock.send_data(&io_buf).await.expect("");
             }
         }
     }
