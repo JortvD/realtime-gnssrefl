@@ -1,6 +1,7 @@
 
 use core::u32;
 
+use defmt::info;
 use embassy_time::{Instant, Timer};
 use crate::types::{self, Config, Sector, NUM_MEASUREMENTS};
 use crate::NUM_BINS;
@@ -75,8 +76,8 @@ pub async fn task_control(
             }
             Either4::Second(measure_res_msg) => {
                 match measure_res_msg {
-                    MeasureResMsg::GiveRefTime { reftime} => {
-                        realtime.update_ref_time(reftime);
+                    MeasureResMsg::GiveRefTime { reftime, refdate} => {
+                        realtime.update_ref(reftime, refdate);
                         realtime_available = true;
                         let (ns, ntf) = next_sector_timer(&config, &realtime);
                         next_sector.push_front(ns).unwrap();
@@ -127,7 +128,8 @@ pub enum MeasureReqMsg {
 
 pub enum MeasureResMsg {
     GiveRefTime {
-        reftime: u32
+        reftime: u32,
+        refdate: u32,
     },
     SectorSuccess,
     SectorFail, 
@@ -158,6 +160,7 @@ pub enum CommResMsg{
 }
 
 struct RealTime {
+    ref_real_date: u32,
     ref_real_time: u32,
     ref_pico_time: Instant
 }
@@ -165,8 +168,9 @@ struct RealTime {
 impl RealTime {
     pub fn new() -> Self{
         Self {
-           ref_real_time: 0,
-           ref_pico_time: Instant::now(),
+            ref_real_date: 0,
+            ref_real_time: 0,
+            ref_pico_time: Instant::now(),
         }
     }
 
@@ -176,13 +180,14 @@ impl RealTime {
     }
 
     fn get_days(&self) -> u32 {
-        //TODO: get #days since arbitrary day in history
-        return 0;
+        return self.ref_real_date;
     }
 
-    fn update_ref_time(&mut self, ref_time: u32) {
+    fn update_ref(&mut self, ref_time: u32, ref_date: u32) {
         self.ref_real_time = ref_time;
+        self.ref_real_date = ref_date;
         self.ref_pico_time = Instant::now();
+        info!("[control] updated reference time to {} and date to {} (pico at {}", ref_time, ref_date, self.ref_pico_time.as_millis());
     }
 
     fn next_or_min(vec: &Vec<u32, 24>, x: u32) -> (u32, usize) {

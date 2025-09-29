@@ -40,6 +40,7 @@ impl NmeaBurst {
 
 pub struct Burst {
     pub time: u32,
+    pub date: Option<u32>,
     pub num: u32,
     pub samples: Vec<Sample, BURST_SAT_SIZE>,
 }
@@ -48,6 +49,7 @@ impl Burst {
     pub fn new() -> Self {
         Self {
             time: 0,
+            date: None,
             num: 0,
             samples: Vec::new(),
         }
@@ -84,7 +86,7 @@ impl NMEAParser {
         Self { config: config.clone() }
     }
 
-    pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst) -> Burst {
+    pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst, add_date: bool) -> Burst {
         let mut current_gps_time = u32::MAX;
         let mut burst = Burst::new();
         let mut num: u32 = 0;
@@ -109,6 +111,9 @@ impl NMEAParser {
             else if self.is_command(command, "GSV") {
                 self.parse_gsv(it, command, &mut burst.samples, &mut num);
             }
+            else if self.is_command(command, "RMC") && add_date {
+                burst.date = self.parse_rmc(it);
+            }
         }
 
         let mut header = current_gps_time;
@@ -119,6 +124,24 @@ impl NMEAParser {
         burst.num = num;
 
         burst
+    }
+
+    fn parse_rmc(&mut self, mut it: Split<'_, char>) -> Option<u32> {
+        let _time = it.next()?;
+        let _status = it.next()?;
+        let _lat = it.next()?;
+        let _northsouth = it.next()?;
+        let _lon = it.next()?;
+        let _eastwest = it.next()?;
+        let _speed = it.next()?;
+        let _course = it.next()?;
+        let date_str = it.next()?;
+
+        let day = date_str[0..2].parse::<u16>().ok()?;
+        let month = date_str[2..4].parse::<u16>().ok()?;
+        let year = date_str[4..6].parse::<u16>().ok()? + 2000;
+
+        Some(days_from_civil(year as i32, month as u32, day as u32))
     }
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {
@@ -263,4 +286,17 @@ impl NMEAParser {
 
         None
     }
+}
+
+fn days_from_civil(mut y: i32, m: u32, d: u32) -> u32 {
+    // Shift March to be month 0 to make leap math simple.
+    let m = m as i32;
+    y -= if m <= 2 { 1 } else { 0 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;           // floor div by 400
+    let yoe = (y - era * 400) as i64;                           // [0, 399]
+    let mp  = (m + if m > 2 { -3 } else { 9 }) as i64;          // Mar=0,…,Feb=11
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;                // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;            // [0, 146096]
+    // 719468 is the days offset to 1970-01-01.
+    (era as i64 * 146_097 + doe - 719_468) as u32
 }

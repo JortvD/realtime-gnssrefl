@@ -19,8 +19,8 @@ pub async fn task_measure(
         match channel_req.receive().await {
             MeasureReqMsg::GetRefTime => {
                 {
-                    let reftime = get_time(&mut gnss_sensor).await;
-                    channel_res.send(MeasureResMsg::GiveRefTime { reftime: reftime }).await;
+                    let (reftime, refdate) = get_time(&mut gnss_sensor).await;
+                    channel_res.send(MeasureResMsg::GiveRefTime { reftime, refdate }).await;
                 }
             }
             MeasureReqMsg::MeasureSector { sector, config } => {
@@ -46,7 +46,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         let start_time = Instant::now();
 
         // A full burst has been collected, do something with it
-        let burst = gnss_sensor.parser.parse_burst(&nmeaburst);
+        let burst = gnss_sensor.parser.parse_burst(&nmeaburst, false);
 
         let time_str = seconds_to_time_str(burst.time);
 
@@ -97,8 +97,8 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
     info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
 }
 
-pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> u32 {
+pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> (u32, u32) {
     let nmeaburst = gnss_sensor.read_burst().await;
-    let burst = gnss_sensor.parser.parse_burst(&nmeaburst);
-    burst.time
+    let burst = gnss_sensor.parser.parse_burst(&nmeaburst, true);
+    (burst.time, burst.date.unwrap_or(0))
 }
