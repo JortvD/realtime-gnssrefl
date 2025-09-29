@@ -82,7 +82,7 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
     embassy_rp::binary_info::rp_program_build_attribute!(),
 ];
 
-type StorageType = Mutex<ThreadModeRawMutex, Option<FlashStorage>>;
+type StorageType = Mutex<CriticalSectionRawMutex, Option<FlashStorage>>;
 static STORAGE: StorageType = Mutex::new(None);
 
 #[embassy_executor::main]
@@ -120,21 +120,20 @@ async fn main(spawner: Spawner) {
 
     //let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
+    info!("Initialized peripherals");
+
     // Spawn core 0 tasks
-    spawner.spawn(task_control(
-        &MEASURE_REQUEST_CHANNEL,
-        &COMPUTE_REQUEST_CHANNEL,
-        &COMM_REQUEST_CHANNEL,
-        &MEASURE_RESPONSE_CHANNEL,
-        &COMPUTE_RESPONSE_CHANNEL,
+    spawner.spawn(task_compute(
+        &COMPUTE_REQUEST_CHANNEL, 
+        &COMPUTE_RESPONSE_CHANNEL, 
+        &STORAGE)).unwrap();
+    spawner.spawn(task_comms(
+        &COMM_REQUEST_CHANNEL, 
         &COMM_RESPONSE_CHANNEL,
-        
-    )).unwrap();
-    spawner.spawn(task_measure(
-        &MEASURE_REQUEST_CHANNEL,
-        &MEASURE_RESPONSE_CHANNEL,
-         &STORAGE, 
-         gnss_sensor)).unwrap();
+        &STORAGE,
+        rockblock)).unwrap();
+
+    info!("Spawned core 0 tasks");
 
     // Spawn core 1 tasks
     spawn_core1(
@@ -143,24 +142,32 @@ async fn main(spawner: Spawner) {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.spawn(task_compute(
-                    &COMPUTE_REQUEST_CHANNEL, 
-                    &COMPUTE_RESPONSE_CHANNEL, 
-                    &STORAGE)).unwrap();
-                spawner.spawn(task_comms(
-                    &COMM_REQUEST_CHANNEL, 
-                    &COMM_RESPONSE_CHANNEL,
-                    &STORAGE,
-                    rockblock)).unwrap();
-                spawner.spawn(led_blink(led)).unwrap();
+                spawner.spawn(task_control(
+                &MEASURE_REQUEST_CHANNEL,
+                &COMPUTE_REQUEST_CHANNEL,
+                &COMM_REQUEST_CHANNEL,
+                &MEASURE_RESPONSE_CHANNEL,
+                &COMPUTE_RESPONSE_CHANNEL,
+                &COMM_RESPONSE_CHANNEL, 
+            )).unwrap();
+            spawner.spawn(task_measure(
+                &MEASURE_REQUEST_CHANNEL,
+                &MEASURE_RESPONSE_CHANNEL,
+                &STORAGE, 
+                gnss_sensor
+            )).unwrap();
+            spawner.spawn(led_blink(led)).unwrap();
             });
         },
     );
+
+    info!("Spawned core 1 tasks");
 }
 
 
 #[embassy_executor::task]
 async fn led_blink(mut led: Output<'static>) {
+    info!("[LED]: Lets go blinking");
     loop {
         led.set_high();
         Timer::after_millis(25).await;
@@ -168,3 +175,28 @@ async fn led_blink(mut led: Output<'static>) {
         Timer::after_millis(25).await;
     }
 }
+
+// #[embassy_executor::task]
+// async fn task0() {
+//     loop {
+//         info!("Task0");
+//         Timer::after_millis(1000).await;
+//     }
+// }
+
+// #[embassy_executor::task]
+// async fn task1() {
+//     loop {
+//         info!("Task1");
+//         Timer::after_millis(1000).await;
+//                 let x = 1;
+//         let y = 0;
+//         let _ = x / y; // division by zero triggers a crash
+//         //defmt::panic!("Task1 panic");
+//     }
+// }
+
+
+
+
+

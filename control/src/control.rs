@@ -20,7 +20,7 @@ pub async fn task_control(
     comm_response_channel: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
     ) 
     {
-
+        
     let config = types::Config::default();
     let mut realtime = RealTime::new();
 

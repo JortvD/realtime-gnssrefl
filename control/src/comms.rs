@@ -76,18 +76,21 @@ pub async fn task_comms(
     channel_req: &'static Channel<CriticalSectionRawMutex, CommReqMsg, 8>,
     channel_res: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
     storage: &'static StorageType,
-    rockblock: RockBlock,
+    mut rockblock: RockBlock,
 ) {
-    match channel_req.receive().await {
-        CommReqMsg::Send { sector, config } => {
-            run_comms(rockblock, storage, sector, config.num_send_measurements).await;
-            channel_res.send(CommResMsg::Success).await;
+    loop {
+        info!("[comm]: Wait for request");
+        match channel_req.receive().await {
+            CommReqMsg::Send { sector, config } => {
+                run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
+                channel_res.send(CommResMsg::Success).await;
+            }
         }
     }
 }
 
 async fn run_comms(
-    mut rockblock: RockBlock,
+    rockblock: &mut RockBlock,
     storage: &'static StorageType,
     sector: Sector,
     num_measurements: u32,

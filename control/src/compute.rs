@@ -1,4 +1,4 @@
-use defmt::info;
+use defmt::*;
 use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
@@ -24,7 +24,7 @@ type ArcQueue = Vec<Arc, 256>;
 type ObservationVec = Vec<Observation, 256>;
 type RangeVec = Vec<f32, 512>;
 type AmplVec = Vec<f32, 512>;
-type SampleVec = Vec<f32, { BIN_BURST_SIZE * 30 }>;
+type SampleVec = Vec<f32, { BIN_BURST_SIZE * 20 }>;
 
 #[derive(Debug, Clone, Copy)]
 struct Arc {
@@ -95,10 +95,13 @@ pub async fn task_compute(
     channel_res: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
     storage: &'static StorageType,
 ) {
-    match channel_req.receive().await {
-        ComputeReqMsg::Compute { sector, config } => {
-            run_compute(sector, storage, config).await;
-            channel_res.send(ComputeResMsg::Success).await;
+    loop {
+        info!("[task_compute]: Wait for request");
+        match channel_req.receive().await {
+            ComputeReqMsg::Compute { sector, config } => {
+                run_compute(sector, storage, config).await;
+                channel_res.send(ComputeResMsg::Success).await;
+            }
         }
     }
 }
