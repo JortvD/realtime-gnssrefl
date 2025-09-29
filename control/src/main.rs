@@ -143,16 +143,16 @@ async fn main(spawner: Spawner) {
         move || {
             let executor1 = EXECUTOR1.init(Executor::new());
             executor1.run(|spawner| {
-                spawner.spawn(task_compute(
-                    &COMPUTE_REQUEST_CHANNEL, 
-                    &COMPUTE_RESPONSE_CHANNEL, 
-                    &STORAGE)).unwrap();
+                // spawner.spawn(task_compute(
+                //     &COMPUTE_REQUEST_CHANNEL, 
+                //     &COMPUTE_RESPONSE_CHANNEL, 
+                //     &STORAGE)).unwrap();
                 spawner.spawn(task_comms(
                     &COMM_REQUEST_CHANNEL, 
                     &COMM_RESPONSE_CHANNEL,
                     &STORAGE,
                     rockblock)).unwrap();
-                spawner.spawn(led_blink(led)).unwrap();
+                // spawner.spawn(led_blink(led)).unwrap();
             });
         },
     );
