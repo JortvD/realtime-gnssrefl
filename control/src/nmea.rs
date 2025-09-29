@@ -1,5 +1,6 @@
 use core::str::Split;
 
+use defmt::info;
 use embassy_time::Duration;
 use heapless::Vec;
 use crate::types::*;
@@ -95,6 +96,7 @@ impl NMEAParser {
 
         for line in &nmeaburst.lines {
             // Split only by ',' to match the expected type for parse_gga
+            info!("[nmea] parsing line: {}", line.as_str());
             let mut it = line.split(',');
 
             let command = match it.next() {

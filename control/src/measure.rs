@@ -17,7 +17,9 @@ pub async fn task_measure(
     // Get sector & config
     loop {
         info!("[task_measure]: Wait for request");
-        match channel_req.receive().await {
+        let message = channel_req.receive().await;
+        info!("[task_measure]: request received");
+        match message {
             MeasureReqMsg::GetRefTime => {
                 {
                     let (reftime, refdate) = get_time(&mut gnss_sensor).await;

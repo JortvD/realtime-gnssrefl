@@ -5,9 +5,9 @@ use embassy_time::{Duration, Instant, Timer};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
 
-pub struct MeasurementPacket {
+pub struct MeasurementPacket { // 5 bytes
     relative_height_mean: u16,
     relative_height_std: u8,
     num_observations_used: u8,
@@ -36,7 +36,7 @@ impl MeasurementPacket {
 
 const MAX_MEASUREMENT_PACKETS: usize = 10;
 
-pub struct Packet {
+pub struct Packet { // 5 + n * 5 bytes = 55
     id_status: u16, // 13 bits id, 3 bits status
     timestamp: u16,
     battery: u8,
@@ -58,7 +58,7 @@ impl Packet {
     }
 
     pub fn to_bytes(&self) -> Vec<u8, {5 * MAX_MEASUREMENT_PACKETS + 5}> {
-        let mut data = Vec::<u8, {5 * MAX_MEASUREMENT_PACKETS + 5}>::new();
+        let mut data = Vec::<u8, {5 * MAX_MEASUREMENT_PACKETS + 5}>::new(); // 55 bytes
         data.extend_from_slice(&self.id_status.to_le_bytes()).ok();
         data.push(self.timestamp as u8).ok();
         data.push((self.timestamp >> 8) as u8).ok();
@@ -81,14 +81,11 @@ pub async fn task_comms(
 ) {
     loop {
         info!("[comm]: Wait for request");
-        info!("running1");
-        // rockblock.send_data(&[0,1,2]).await.expect("123");
-        Timer::after(Duration::from_millis(100)).await;
         let select = select(
             channel_req.receive(), 
             rockblock.receive()
         ).await;
-        info!("running2");
+        info!("[comm]: event received");
         match select {
             Either::First(CommReqMsg::Send { sector, config }) => {
                 run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
@@ -110,9 +107,9 @@ async fn dump_bin_storage(rockblock: &mut RockBlock, storage: &'static StorageTy
             let storage = storage_lock.as_mut().expect("Storage not initialized");
         for bin in 0..NUM_BINS {
             for block in 0..NUM_CONTAINER_BLOCKS {
-                let mut io_buf = [0u8; 4096];
+                let mut io_buf = [0u8; BLOCK_SIZE];
 
-                storage.read(bin, block as u32 * 4096, &mut io_buf).expect("");
+                storage.read(bin, (block * BLOCK_SIZE) as u32, &mut io_buf).expect("");
 
                 rockblock.send_data(&io_buf).await.expect("");
             }

@@ -5,7 +5,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
+    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -20,11 +20,11 @@ const MIN_HEIGHT: f32 = 2.0;
 const MAX_HEIGHT: f32 = 7.0;
 const STEP_SIZE: f32 = 0.05;
 
-type ArcQueue = Vec<Arc, 256>;
-type ObservationVec = Vec<Observation, 256>;
-type RangeVec = Vec<f32, 512>;
-type AmplVec = Vec<f32, 512>;
-type SampleVec = Vec<f32, { BIN_BURST_SIZE * 20 }>;
+type ArcQueue = Vec<Arc, 256>; // 6 * 256 = 1536 bytes
+type ObservationVec = Vec<Observation, 256>; // 24 * 256 = 6144 bytes
+type RangeVec = Vec<f32, 512>; // 4 * 512 = 1024 bytes
+type AmplVec = Vec<f32, 512>; // 4 * 512 = 1024 bytes
+type SampleVec = Vec<f32, { BIN_BURST_SIZE * 20 }>; // 4 * 240 * 40 = 38400 bytes
 
 #[derive(Debug, Clone, Copy)]
 struct Arc {
@@ -97,8 +97,11 @@ pub async fn task_compute(
 ) {
     loop {
         info!("[task_compute]: Wait for request");
-        match channel_req.receive().await {
+        let message = channel_req.receive().await;
+        info!("[task_compute]: request received");
+        match message {
             ComputeReqMsg::Compute { sector, config } => {
+                info!("[task_compute]: starting computation for sector {}", sector.get_index());
                 run_compute(sector, storage, config).await;
                 channel_res.send(ComputeResMsg::Success).await;
             }
@@ -115,9 +118,9 @@ async fn run_compute(
     let total_start = Instant::now();
     let bin_storage = BinStorage::new(config.seconds_per_bin);
     let measurement_storage = MeasurementStorage::new();
-    let mut io_buf = [0u8; BUF_BYTES];
+    let mut io_buf = [0u8; BUF_BYTES]; // 24 * 64 * 4 = 61440 bytes
 
-    let queue: ArcQueue;
+    let queue: ArcQueue; // 1536 bytes
 
     let start = Instant::now();
     {
@@ -142,12 +145,12 @@ async fn run_compute(
     let mut observations: ObservationVec = Vec::new();
 
     // Reuse these buffers for every arc to avoid per-arc allocations.
-    let mut times: SampleVec = Vec::new();
-    let mut elevs: SampleVec = Vec::new();
-    let mut snrs: SampleVec = Vec::new();
-    let mut x: SampleVec = Vec::new();
-    let mut y: SampleVec = Vec::new();
-    let mut ampls: AmplVec = Vec::new();
+    let mut times: SampleVec = Vec::new(); // 38400 bytes
+    let mut elevs: SampleVec = Vec::new(); // 38400 bytes
+    let mut snrs: SampleVec = Vec::new(); // 38400 bytes
+    let mut x: SampleVec = Vec::new(); // 38400 bytes
+    let mut y: SampleVec = Vec::new(); // 38400 bytes
+    let mut ampls: AmplVec = Vec::new(); // 1024 bytes
 
     let total_arcs: usize = queue.len(); 
 
@@ -195,10 +198,10 @@ async fn run_compute(
             (Instant::now() - start).as_millis()
         );
 
-        if num_records < QC_MIN_SAMPLES {
-            info!("[compute][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
-            continue;
-        }
+        // if num_records < QC_MIN_SAMPLES {
+        //     info!("[compute][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
+        //     continue;
+        // }
 
         // Make sure elevation is smooth over time
         let start = Instant::now();
@@ -249,32 +252,30 @@ async fn run_compute(
             ampls.push(0.0).ok();
         }
 
-        const N: usize = BIN_BURST_SIZE * 30; // your previous bound
+        const N: usize = BIN_BURST_SIZE * 20; // your previous bound
 
         // Use stack-allocated arrays instead of mutable statics.
-        let mut t:   [f32; N] = [0.0; N];
-        let mut yv:  [f32; N] = [0.0; N];
-        let mut sw:  [f32; N] = [0.0; N];
-        let mut cw:  [f32; N] = [0.0; N];
-        let mut sd:  [f32; N] = [0.0; N];
-        let mut cd:  [f32; N] = [0.0; N];
+        // let mut yv:  [f32; N] = [0.0; N];
+        // let mut sw:  [i16; N] = [0; N];
+        // let mut cw:  [i16; N] = [0; N];
+        // let mut sd:  [i16; N] = [0; N];
+        // let mut cd:  [i16; N] = [0; N];
 
-        // In your task (single-threaded over the buffers):
-        let mut sc = LsScratch {
-            t:   &mut t,
-            yv:  &mut yv,
-            s_w: &mut sw,
-            c_w: &mut cw,
-            s_d: &mut sd,
-            c_d: &mut cd,
-        };
+        // // In your task (single-threaded over the buffers):
+        // let mut sc = LsScratch {
+        //     yv:  &mut yv,
+        //     s_w: &mut sw,
+        //     c_w: &mut cw,
+        //     s_d: &mut sd,
+        //     c_d: &mut cd,
+        // };
 
         let f0 = MIN_HEIGHT;
         let df = STEP_SIZE;
         let m = size;
 
         let start = Instant::now();
-        math::lombscargle_no_std(&x, &y, f0, df, m, &mut ampls, &mut sc);
+        math::lombscargle_no_std(&x, &y, &range, &mut ampls);
         info!(
             "[compute][{:03}/{:03}] Lomb-Scargle in {} ms",
             idx,
@@ -454,6 +455,8 @@ fn build_arc_queue(
     io_buf: &mut [u8; BUF_BYTES],
 ) -> ArcQueue {
     let mut queue: ArcQueue = Vec::new();
+
+    info!("[compute] building arc queue for sector {}", sector.get_index());
 
     for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
         let id = rec.get_id();

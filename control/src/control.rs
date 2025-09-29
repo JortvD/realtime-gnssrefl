@@ -42,11 +42,15 @@ pub async fn task_control(
         // Send task to Core 0 if available (get reference time or measure)
         if !core0busy {
             if !realtime_available {
+                info!("[control] requesting reference time from GNSS");
                 measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
+                info!("[control] requested reference time from GNSS");
                 core0busy = true;
             } else
             if let Some(sector) = sector.front() {
+                info!("[control] requesting measurement for sector {}", sector.get_index());
                 measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: sector.clone(), config: config.clone() }).await;
+                info!("[control] requested measurement for sector {}", sector.get_index());
                 core0busy = true;
             }
         }
@@ -54,29 +58,38 @@ pub async fn task_control(
         // Send task to Core 1 if available (compute or communicate)
         if !core1busy {
             if let Some(sector) = list_measured.front() {
+                info!("[control] requesting computation for sector {}", sector.get_index());
                 compute_request_channel.send(ComputeReqMsg::Compute { sector: sector.clone(), config: config.clone() }).await;
+                info!("[control] requested computation for sector {}", sector.get_index());
                 core1busy = true;
             } else
             if let Some(sector) = list_computed.front() {
+                info!("[control] requesting communication for sector {}", sector.get_index());
                 comm_request_channel.send(CommReqMsg::Send { sector: sector.clone(), config: config.clone()}).await;
+                info!("[control] requested communication for sector {}", sector.get_index());
                 core1busy = true;
             }
         }
 
         // Wait for responses
+        info!("[control] waiting for events");
         let result = select4(
-        &mut next_timer_future,
-        measure_response_channel.receive(),
-        compute_response_channel.receive(),
-        comm_response_channel.receive(),
+            &mut next_timer_future,
+            measure_response_channel.receive(),
+            compute_response_channel.receive(),
+            comm_response_channel.receive(),
         ).await;
+        info!("[control] event received");
         match result {
             Either4::First(_) => {
+                next_timer_future = Timer::after_secs(u32::max_value() as u64);
+                info!("[control] next sector timer expired, getting next sector");
                 sector.push_back(next_sector.pop_front().unwrap()).unwrap();
             }
             Either4::Second(measure_res_msg) => {
                 match measure_res_msg {
                     MeasureResMsg::GiveRefTime { reftime, refdate} => {
+                        info!("[control] received reference time from GNSS: {} s, {}", reftime, refdate);
                         realtime.update_ref(reftime, refdate);
                         realtime_available = true;
                         let (ns, ntf) = next_sector_timer(&config, &realtime);
@@ -85,6 +98,7 @@ pub async fn task_control(
                         core0busy = false;
                     },
                     MeasureResMsg::SectorSuccess { } => {
+                        info!("[control] received sector measurement success from GNSS");
                         let sector = sector.pop_front().unwrap();
                         list_measured.push_back(sector).unwrap();
                         let (ns, ntf) = next_sector_timer(&config, &realtime);
@@ -98,6 +112,7 @@ pub async fn task_control(
             Either4::Third(compute_res_msg) => {
                 match compute_res_msg {
                     ComputeResMsg::Success => {
+                        info!("[control] received computation success from core 1");
                         let sector = list_measured.pop_front().unwrap();
                         list_computed.push_back(sector).unwrap();
                         core1busy = false;
@@ -108,6 +123,7 @@ pub async fn task_control(
             Either4::Fourth(comm_res_msg) => {
                 match comm_res_msg {
                     CommResMsg::Success => {
+                        info!("[control] received communication success from core 1");
                         list_computed.pop_front().unwrap();
                         core1busy = false;
                     }
@@ -187,7 +203,7 @@ impl RealTime {
         self.ref_real_time = ref_time;
         self.ref_real_date = ref_date;
         self.ref_pico_time = Instant::now();
-        info!("[control] updated reference time to {} and date to {} (pico at {}", ref_time, ref_date, self.ref_pico_time.as_millis());
+        info!("[control] updated reference time to {} s since 00:00 and date to {} days since 1-1-1970 (pico at {} ms since startup)", ref_time, ref_date, self.ref_pico_time.as_millis());
     }
 
     fn next_or_min(vec: &Vec<u32, 24>, x: u32) -> (u32, usize) {
@@ -237,8 +253,12 @@ fn next_sector_timer<'a>(
         config.seconds_per_bin,
     );
 
+    info!("[control] next sector {} starts at {} s since 00:00 with bins {:?}", sector.get_index(), sector.get_start_time(), sector.get_bins().as_slice());
+
     // Compute sleep duration
-    let sleeptime = start_time - realtime.get_real_time();
+    let sleeptime = (start_time - realtime.get_real_time()) % 86400;
+
+    info!("[control] sleeping for {} s until next sector starts", sleeptime);
 
     // Create timer future
     let timer_future = Timer::after_secs(sleeptime as u64);

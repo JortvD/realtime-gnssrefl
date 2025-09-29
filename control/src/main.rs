@@ -102,8 +102,8 @@ async fn main(spawner: Spawner) {
 
     // UART GNSS
     let mut gnss_uart_config = uart::Config::default();
-    gnss_uart_config.baudrate = 921_600;
-    let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
+    gnss_uart_config.baudrate = 115_200;
+    let gnss_uart = uart::Uart::new(p.UART0, p.PIN_12, p.PIN_13, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
     let gnss_sensor = GNSSSensor::new(gnss_uart, types::Config::default());
 
     // UART Rockblock
@@ -112,7 +112,7 @@ async fn main(spawner: Spawner) {
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let rockblock = RockBlock::new(uart_rockblock);
 
-    let storage = FlashStorage::new(p.FLASH, false);
+    let storage = FlashStorage::new(p.FLASH, true);
 
     {
         *(STORAGE.lock().await) = Some(storage);
@@ -133,16 +133,7 @@ async fn main(spawner: Spawner) {
         &STORAGE,
         rockblock)).unwrap();
 
-    info!("Spawned core 0 tasks");
-
-    // Spawn core 1 tasks
-    spawn_core1(
-        p.CORE1,
-        unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
-        move || {
-            let executor1 = EXECUTOR1.init(Executor::new());
-            executor1.run(|spawner| {
-                spawner.spawn(task_control(
+        spawner.spawn(task_control(
                 &MEASURE_REQUEST_CHANNEL,
                 &COMPUTE_REQUEST_CHANNEL,
                 &COMM_REQUEST_CHANNEL,
@@ -156,6 +147,17 @@ async fn main(spawner: Spawner) {
                 &STORAGE, 
                 gnss_sensor
             )).unwrap();
+
+    info!("Spawned core 0 tasks");
+
+    // Spawn core 1 tasks
+    spawn_core1(
+        p.CORE1,
+        unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
+        move || {
+            let executor1 = EXECUTOR1.init(Executor::new());
+            executor1.run(|spawner| {
+                
             spawner.spawn(led_blink(led)).unwrap();
             });
         },

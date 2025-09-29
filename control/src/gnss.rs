@@ -1,3 +1,4 @@
+use defmt::info;
 use embassy_rp::uart;
 use embassy_time::Instant;
 
@@ -38,8 +39,8 @@ impl GNSSSensor {
                 if n_bytes == 1 {
                     start = Instant::now();
                 }
-                
-                line.push(read_byte[0] as char).unwrap();
+
+                line.push(read_byte[0] as char).expect("line buffer overflow");
 
                 match read_byte[0] {
                     b'\n' => {

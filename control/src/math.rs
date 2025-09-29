@@ -9,24 +9,19 @@ fn kahan_add(sum: &mut f32, c: &mut f32, x: f32) {
     *sum = t;
 }
 
-/// Scratch buffers for the uniform-grid accelerator.
-/// All slices must have length >= number of valid (finite) samples.
-pub struct LsScratch<'a> {
-    pub t:     &'a mut [f32; 240 * 30], // packed finite times
-    pub yv:    &'a mut [f32; 240 * 30], // packed (y - mean)
-    pub s_w:   &'a mut [f32; 240 * 30], // sin(ω_k t_i) current
-    pub c_w:   &'a mut [f32; 240 * 30], // cos(ω_k t_i) current
-    pub s_d:   &'a mut [f32; 240 * 30], // sin(Δω t_i), constant across k
-    pub c_d:   &'a mut [f32; 240 * 30], // cos(Δω t_i), constant across k
-}
-
+/// Lomb–Scargle (unweighted, Scargle 1982), no_std, f32.
+/// Drop-in optimized general version: packs valid samples, precomputes 2πt.
 #[inline(always)]
-fn pack_center_and_init<'a>(
-    x: &[f32], y: &[f32],
-    f0_omega: f32, d_omega: f32,
-    sc: &mut LsScratch<'a>
+pub fn lombscargle_no_std(
+    x: &[f32],
+    y: &[f32],
+    frequencies: &[f32],
+    power_out: &mut [f32],
 ) -> usize {
-    // mean over finite
+    let m = core::cmp::min(frequencies.len(), power_out.len());
+    if m == 0 { return 0; }
+
+    // Pass 0: mean over finite pairs
     let len = core::cmp::min(x.len(), y.len());
     let (mut sum_y, mut comp_y) = (0.0f32, 0.0f32);
     let mut n = 0usize;
@@ -37,129 +32,118 @@ fn pack_center_and_init<'a>(
             n += 1;
         }
     }
-    if n == 0 { return 0; }
-    let mean_y = sum_y / (n as f32);
-
-    // pack & precompute sin/cos at ω0 t and Δω t
-    let mut j = 0usize;
-    for i in 0..len {
-        let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
-        if !(ti.is_finite() && yi.is_finite()) { continue; }
-
-        let yv = yi - mean_y;
-        sc.t[j]  = ti;
-        sc.yv[j] = yv;
-
-        let a0 = f0_omega * ti;
-        let (s0, c0) = libm::sincosf(a0);
-        sc.s_w[j] = s0;
-        sc.c_w[j] = c0;
-
-        let d  = d_omega * ti;
-        let (sd, cd) = libm::sincosf(d);
-        sc.s_d[j] = sd;
-        sc.c_d[j] = cd;
-
-        j += 1;
-    }
-    j
-}
-
-/// Ultra-fast Lomb–Scargle for **uniform frequency grid**:
-/// frequencies: f_k = f0 + k*df, for k in [0, m).
-/// Writes min(m, power_out.len()) powers.
-/// Returns number written.
-#[inline(always)]
-pub fn lombscargle_no_std(
-    x: &[f32],
-    y: &[f32],
-    f0: f32,
-    df: f32,
-    m: usize,
-    power_out: &mut [f32],
-    sc: &mut LsScratch<'_>,
-) -> usize {
-    let m = core::cmp::min(m, power_out.len());
-    if m == 0 { return 0; }
-
-    const TWO_PI: f32 = PI * 2.0;
-    const EPS: f32 = 1.0e-7;
-
-    let omega0 = TWO_PI * f0;
-    let domega = TWO_PI * df;
-
-    // Pack/center + init sin/cos tables
-    let n = pack_center_and_init(x, y, omega0, domega, sc);
     if n == 0 {
         for d in &mut power_out[..m] { *d = 0.0; }
         return m;
     }
+    let mean_y = sum_y / (n as f32);
 
-    // For each frequency k
+    // Pack valid pairs + precompute phi = 2π t, and centered yv.
+    // We reuse power_out's tail as a tiny temp when m < n? No—keep code simple and safe.
+    // Ask caller for modest stack? We'll keep fixed on stack up to len via small rolling buffer:
+    // Since we promised "no allocation", we do two passes per frequency if n is huge; still faster due to no finiteness branches.
+    let mut count = 0usize;
+
+    // To avoid dynamic alloc, we create small on-stack scratch windows. For MCUs, this is cheap.
+    // We’ll pre-pack into fixed stack chunks and process chunk-by-chunk.
+    const CHUNK: usize = 256; // tune to L1 & your cache/flash wait states
+    let mut buf_phi = [0.0f32; CHUNK];
+    let mut buf_yv  = [0.0f32; CHUNK];
+
+    const TWO_PI: f32 = PI * 2.0;
+    const EPS: f32 = 1.0e-7;
+
+    // Indices of valid pairs (single pass materialization as we stream chunks)
+    // We’ll rescan x/y to refill the chunk; avoids heap.
+    // Helper closure to (re)fill a chunk starting at `start_idx`, returning (filled, next_start).
+    #[inline(always)]
+    fn refill_chunk(
+        x: &[f32], y: &[f32], start: usize,
+        buf_phi: &mut [f32; CHUNK],
+        buf_yv:  &mut [f32; CHUNK],
+        mean_y: f32
+    ) -> (usize, usize) {
+        let len = core::cmp::min(x.len(), y.len());
+        let mut filled = 0usize;
+        let mut i = start;
+        while i < len && filled < CHUNK {
+            let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
+            if ti.is_finite() && yi.is_finite() {
+                buf_phi[filled] = TWO_PI * ti;
+                buf_yv [filled] = yi - mean_y;
+                filled += 1;
+            }
+            i += 1;
+        }
+        (filled, i)
+    }
+
+    // Evaluate each frequency
     for k in 0..m {
-        // --- Pass 1: tau from current sin(ωt), cos(ωt)
+        let f = frequencies[k];
+        if f.abs() < EPS {
+            power_out[k] = 0.0;
+            continue;
+        }
+
+        let omega  = TWO_PI * f;
+        // Pass 1: tau via sums of sin(2ωt), cos(2ωt)
         let (mut s2, mut c2) = (0.0f32, 0.0f32);
         let (mut cs2, mut cc2) = (0.0f32, 0.0f32);
-        // sin(2a)=2sc; cos(2a)=c^2-s^2
-        for i in 0..n {
-            let s = unsafe { *sc.s_w.get_unchecked(i) };
-            let c = unsafe { *sc.c_w.get_unchecked(i) };
-            kahan_add(&mut s2, &mut cs2, 2.0 * s * c);
-            kahan_add(&mut c2, &mut cc2, c * c - s * s);
+
+        let mut start = 0usize;
+        loop {
+            let (filled, next) = refill_chunk(x, y, start, &mut buf_phi, &mut buf_yv, mean_y);
+            if filled == 0 { break; }
+            // use phi (2πt) to save a mul
+            for i in 0..filled {
+                let a2 = (omega + omega) * (buf_phi[i] / TWO_PI); // a2 = 2ωt; but we only have φ=2πt
+                // more efficient: a2 = (2ω/2π) * φ = (ω/π) * φ
+                // But keep it numerically stable:
+                let a2 = (omega / PI) * buf_phi[i];
+                let (s_2a, c_2a) = libm::sincosf(a2);
+                kahan_add(&mut s2, &mut cs2, s_2a);
+                kahan_add(&mut c2, &mut cc2, c_2a);
+            }
+            start = next;
         }
+
         let omega_tau = 0.5 * libm::atan2f(s2, c2);
         let (s_tau, c_tau) = libm::sincosf(omega_tau);
 
-        // --- Pass 2: rotate by τ, accumulate
+        // Pass 2: accumulate at shifted phase using rotation
         let (mut yc, mut ys) = (0.0f32, 0.0f32);
         let (mut cyc, mut cys) = (0.0f32, 0.0f32);
         let (mut cc, mut ss)  = (0.0f32, 0.0f32);
 
-        for i in 0..n {
-            let s = unsafe { *sc.s_w.get_unchecked(i) };
-            let c = unsafe { *sc.c_w.get_unchecked(i) };
+        let mut start2 = 0usize;
+        loop {
+            let (filled, next) = refill_chunk(x, y, start2, &mut buf_phi, &mut buf_yv, mean_y);
+            if filled == 0 { break; }
+            for i in 0..filled {
+                let a = (omega / TWO_PI) * buf_phi[i]; // a = ωt = (ω/2π) * (2πt)
+                let (s, c) = libm::sincosf(a);
 
-            // rotate (s,c) -> (s_shift, c_shift)
-            let s_shift = s * c_tau - c * s_tau;
-            let c_shift = c * c_tau + s * s_tau;
+                let s_shift = s * c_tau - c * s_tau;
+                let c_shift = c * c_tau + s * s_tau;
 
-            let yv = unsafe { *sc.yv.get_unchecked(i) };
-            kahan_add(&mut yc, &mut cyc, yv * c_shift);
-            kahan_add(&mut ys, &mut cys, yv * s_shift);
+                let yv = buf_yv[i];
+                kahan_add(&mut yc, &mut cyc, yv * c_shift);
+                kahan_add(&mut ys, &mut cys, yv * s_shift);
 
-            cc += c_shift * c_shift;
-            ss += s_shift * s_shift;
+                cc += c_shift * c_shift;
+                ss += s_shift * s_shift;
+            }
+            start2 = next;
         }
 
         let pc = if cc > EPS { (yc * yc) / cc } else { 0.0 };
         let ps = if ss > EPS { (ys * ys) / ss } else { 0.0 };
         power_out[k] = 0.5 * (pc + ps);
-
-        // --- Advance sin/cos to next frequency using angle addition with Δω
-        // sin' = s*cΔ + c*sΔ ; cos' = c*cΔ - s*sΔ
-        // This avoids any sin/cos per-sample inside the loop over k.
-        if k + 1 < m {
-            for i in 0..n {
-                let s = unsafe { *sc.s_w.get_unchecked(i) };
-                let c = unsafe { *sc.c_w.get_unchecked(i) };
-                let sd = unsafe { *sc.s_d.get_unchecked(i) };
-                let cd = unsafe { *sc.c_d.get_unchecked(i) };
-
-                let s_next = s * cd + c * sd;
-                let c_next = c * cd - s * sd;
-
-                unsafe {
-                    *sc.s_w.get_unchecked_mut(i) = s_next;
-                    *sc.c_w.get_unchecked_mut(i) = c_next;
-                }
-            }
-        }
     }
 
     m
 }
-
-
 
 use core::cmp::min;
 

@@ -2,7 +2,7 @@ use defmt::info;
 use heapless::{Vec, String};
 
 // NMEA processing
-pub const NMEA_MAX_LINES: usize = 100;
+pub const NMEA_MAX_LINES: usize = 128;
 pub const NMEA_LINE_LEN: usize = 256;
 
 pub type Nmealine = String<NMEA_LINE_LEN>;
@@ -22,7 +22,7 @@ pub const START_ADDRESS: u32 = 0x100000; // Start at 1MB offset (flash-relative)
 pub const NUM_BINS: usize = 50;
 pub const BINS_CONTAINER_START: usize = 0;
 // 50: measurements (1 container)
-pub const NUM_MEASUREMENTS: usize = CONTAINER_SIZE;
+pub const NUM_MEASUREMENTS: usize = 1;
 pub const MEASUREMENTS_CONTAINER_START: usize = 50;
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
@@ -53,20 +53,17 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         let mut midpoints = Vec::<u32, 24>::new();
-        midpoints.push(5).unwrap();
-        midpoints.push(11).unwrap();
-        midpoints.push(17).unwrap();
-        midpoints.push(23).unwrap();
+        midpoints.push(68121 + 30 + 25).unwrap();
         Self {
             pre_min_elevation: 10,
             pre_max_elevation: 30,
             pre_min_azimuth: 50,
             pre_max_azimuth: 150,
-            sector_measure_duration: 60 * 60 * 2,
+            sector_measure_duration: 60,
             sector_midpoints: midpoints,
 
-            bins_per_sector: 30,
-            seconds_per_bin: 240,
+            bins_per_sector: 1,
+            seconds_per_bin: 60,
 
             num_send_measurements: 3,
         }
