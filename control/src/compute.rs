@@ -5,7 +5,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, nmea::BURST_SAT_SIZE, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE}, StorageType
+    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -14,7 +14,7 @@ const QC_MIN_PEAK_TO_MEAN: f32 = 3.0;
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
-const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SAT_SIZE * 4;
+const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 4;
 
 const MIN_HEIGHT: f32 = 2.0;
 const MAX_HEIGHT: f32 = 7.0;
@@ -24,7 +24,7 @@ type ArcQueue = Vec<Arc, 256>;
 type ObservationVec = Vec<Observation, 256>;
 type RangeVec = Vec<f32, 512>;
 type AmplVec = Vec<f32, 512>;
-type SampleVec = Vec<f32, { BIN_BURST_SIZE * 30 }>;
+type SampleVec = Vec<f32, { BIN_BURST_SIZE * 20 }>;
 
 #[derive(Debug, Clone, Copy)]
 struct Arc {
@@ -34,7 +34,7 @@ struct Arc {
 }
 
 #[derive(Clone, Copy)]
-struct Record {
+pub struct Record {
     data: u32,
 }
 
@@ -47,44 +47,44 @@ impl Record {
     // E - 6 bit SNR (0-64) - 0x3F
     // F - 1 bit band (0=L1, 1=L5) - 0x1
     #[inline]
-    fn from_sample(sample: u32) -> Self {
+    pub fn from_sample(sample: u32) -> Self {
         Self { data: sample }
     }
 
     #[inline]
-    fn get_id(&self) -> u16 {
+    pub fn get_id(&self) -> u16 {
         (1 + self.get_network() as u16) * 10000
             + self.get_band() as u16 * 1000
             + self.get_satellite() as u16
     }
 
     #[inline]
-    fn get_band(&self) -> bool {
+    pub fn get_band(&self) -> bool {
         (self.data & 0x1) != 0
     }
 
     #[inline]
-    fn get_snr(&self) -> u8 {
+    pub fn get_snr(&self) -> u8 {
         ((self.data >> 1) & 0x3F) as u8
     }
 
     #[inline]
-    fn get_azimuth(&self) -> u16 {
+    pub fn get_azimuth(&self) -> u16 {
         ((self.data >> 7) & 0x1FF) as u16
     }
 
     #[inline]
-    fn get_elevation(&self) -> u8 {
+    pub fn get_elevation(&self) -> u8 {
         ((self.data >> 16) & 0x7F) as u8
     }
 
     #[inline]
-    fn get_network(&self) -> u8 {
+    pub fn get_network(&self) -> u8 {
         ((self.data >> 23) & 0x3) as u8
     }
 
     #[inline]
-    fn get_satellite(&self) -> u8 {
+    pub fn get_satellite(&self) -> u8 {
         ((self.data >> 25) & 0x7F) as u8
     }
 }
