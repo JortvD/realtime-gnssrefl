@@ -16,6 +16,7 @@ pub async fn task_measure(
 ) {
     // Get sector & config
     loop {
+        info!("[task_measure]: Wait for request");
         match channel_req.receive().await {
             MeasureReqMsg::GetRefTime => {
                 {

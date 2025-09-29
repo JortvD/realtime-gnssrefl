@@ -80,6 +80,7 @@ pub async fn task_comms(
     mut rockblock: RockBlock,
 ) {
     loop {
+        info!("[comm]: Wait for request");
         info!("running1");
         // rockblock.send_data(&[0,1,2]).await.expect("123");
         Timer::after(Duration::from_millis(100)).await;
