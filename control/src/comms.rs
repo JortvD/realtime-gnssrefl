@@ -1,7 +1,7 @@
 
 use defmt::info;
 use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
@@ -80,18 +80,19 @@ pub async fn task_comms(
     mut rockblock: RockBlock,
 ) {
     loop {
-        info!("[comm]: Wait for request");
+        info!("[comm] waiting for request");
         let select = select(
             channel_req.receive(), 
             rockblock.receive()
         ).await;
-        info!("[comm]: event received");
         match select {
             Either::First(CommReqMsg::Send { sector, config }) => {
+                info!("[comm] starting communication for sector {}", sector.get_index());
                 run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
                 channel_res.send(CommResMsg::Success).await;
             }
             Either::Second(command) => {
+                info!("[comm] rockblock command received");
                 match command.ok().expect("msg") {
                     RockBlockCommand::DMP1 => dump_bin_storage(&mut rockblock, storage).await,
                     _ => {},
@@ -140,11 +141,11 @@ async fn run_comms(
             measurement = measurement_storage.read(storage, (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
         }
         if measurement.is_none() {
-            info!("[comms] No measurement found at location {}, skipping", (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
+            info!("[comm] No measurement found at location {}, skipping", (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
             continue;
         }
         let measurement = measurement.unwrap();
-        info!("[comms] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
+        info!("[comm] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
         let packet_measurement = MeasurementPacket::new(
             mean_f32_to_u16(measurement.mean, 20.0),
             std_f32_to_u8(measurement.std, 1.0),
@@ -155,11 +156,11 @@ async fn run_comms(
     }
 
     let data = packet.to_bytes();
-    info!("[comms] Sending packet with {} measurements, total size {} bytes", packet.measurements.len(), data.len());
+    info!("[comm] Sending packet with {} measurements, total size {} bytes", packet.measurements.len(), data.len());
     
     let start = Instant::now();
     rockblock.send_data(&data).await.expect("Failed to send data");
-    info!("[comms] Packet sent in {} ms", (Instant::now() - start).as_millis());
+    info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
 }
 
 fn mean_f32_to_u16(value: f32, max: f32) -> u16 {

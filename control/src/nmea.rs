@@ -3,7 +3,7 @@ use core::str::Split;
 use defmt::info;
 use embassy_time::Duration;
 use heapless::Vec;
-use crate::types::*;
+use crate::{types::*, utils};
 
 pub const BURST_SAT_SIZE: usize = 63;
 
@@ -96,7 +96,6 @@ impl NMEAParser {
 
         for line in &nmeaburst.lines {
             // Split only by ',' to match the expected type for parse_gga
-            info!("[nmea] parsing line: {}", line.as_str());
             let mut it = line.split(',');
 
             let command = match it.next() {
@@ -143,7 +142,7 @@ impl NMEAParser {
         let month = date_str[2..4].parse::<u16>().ok()?;
         let year = date_str[4..6].parse::<u16>().ok()? + 2000;
 
-        Some(days_from_civil(year as i32, month as u32, day as u32))
+        Some(utils::days_from_civil(year as i32, month as u32, day as u32) as u32)
     }
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {
@@ -290,15 +289,3 @@ impl NMEAParser {
     }
 }
 
-fn days_from_civil(mut y: i32, m: u32, d: u32) -> u32 {
-    // Shift March to be month 0 to make leap math simple.
-    let m = m as i32;
-    y -= if m <= 2 { 1 } else { 0 };
-    let era = if y >= 0 { y } else { y - 399 } / 400;           // floor div by 400
-    let yoe = (y - era * 400) as i64;                           // [0, 399]
-    let mp  = (m + if m > 2 { -3 } else { 9 }) as i64;          // Mar=0,…,Feb=11
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;                // [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;            // [0, 146096]
-    // 719468 is the days offset to 1970-01-01.
-    (era as i64 * 146_097 + doe - 719_468) as u32
-}

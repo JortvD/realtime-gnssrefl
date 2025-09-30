@@ -87,22 +87,21 @@ static STORAGE: StorageType = Mutex::new(None);
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    info!("Start of Control");
+    info!("[main] startup");
     // Init peripherals
-
     let mut config: embassy_rp::config::Config = Default::default();
     config.clocks = ClockConfig::system_freq(150_000_000).unwrap();
     let p = embassy_rp::init(config);
 
     let sys_freq = clk_sys_freq();
-    info!("System clock frequency: {} MHz", sys_freq / 1_000_000);
+    info!("[main] using system clock: {} MHz", sys_freq / 1_000_000);
     
     // GPIOS
-    let mut led: Output<'_> = Output::new(p.PIN_25, Level::Low);
+    let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
     // UART GNSS
     let mut gnss_uart_config = uart::Config::default();
-    gnss_uart_config.baudrate = 115_200;
+    gnss_uart_config.baudrate = 921_600;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_12, p.PIN_13, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
     let gnss_sensor = GNSSSensor::new(gnss_uart, types::Config::default());
 
@@ -112,7 +111,7 @@ async fn main(spawner: Spawner) {
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let rockblock = RockBlock::new(uart_rockblock);
 
-    let storage = FlashStorage::new(p.FLASH, true);
+    let storage = FlashStorage::new(p.FLASH, false);
 
     {
         *(STORAGE.lock().await) = Some(storage);
@@ -120,56 +119,61 @@ async fn main(spawner: Spawner) {
 
     //let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
-    info!("Initialized peripherals");
+    info!("[main] initialized peripherals");
 
     // Spawn core 0 tasks
+    spawner.spawn(task_measure(
+        &MEASURE_REQUEST_CHANNEL,
+        &MEASURE_RESPONSE_CHANNEL,
+        &STORAGE, 
+        gnss_sensor
+    )).unwrap();
+       
     spawner.spawn(task_compute(
         &COMPUTE_REQUEST_CHANNEL, 
         &COMPUTE_RESPONSE_CHANNEL, 
-        &STORAGE)).unwrap();
+        &STORAGE
+    )).unwrap();
+
     spawner.spawn(task_comms(
         &COMM_REQUEST_CHANNEL, 
         &COMM_RESPONSE_CHANNEL,
         &STORAGE,
-        rockblock)).unwrap();
+        rockblock
+    )).unwrap();
 
-        spawner.spawn(task_control(
-                &MEASURE_REQUEST_CHANNEL,
-                &COMPUTE_REQUEST_CHANNEL,
-                &COMM_REQUEST_CHANNEL,
-                &MEASURE_RESPONSE_CHANNEL,
-                &COMPUTE_RESPONSE_CHANNEL,
-                &COMM_RESPONSE_CHANNEL, 
-            )).unwrap();
-            spawner.spawn(task_measure(
-                &MEASURE_REQUEST_CHANNEL,
-                &MEASURE_RESPONSE_CHANNEL,
-                &STORAGE, 
-                gnss_sensor
-            )).unwrap();
+    spawner.spawn(task_control(
+        &MEASURE_REQUEST_CHANNEL,
+        &COMPUTE_REQUEST_CHANNEL,
+        &COMM_REQUEST_CHANNEL,
+        &MEASURE_RESPONSE_CHANNEL,
+        &COMPUTE_RESPONSE_CHANNEL,
+        &COMM_RESPONSE_CHANNEL, 
+    )).unwrap();
 
-    info!("Spawned core 0 tasks");
+    spawner.spawn(led_blink(led)).unwrap();
+    
+    info!("[main] spawned core 0 tasks");
 
     // Spawn core 1 tasks
-    spawn_core1(
-        p.CORE1,
-        unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
-        move || {
-            let executor1 = EXECUTOR1.init(Executor::new());
-            executor1.run(|spawner| {
+    // spawn_core1(
+    //     p.CORE1,
+    //     unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
+    //     move || {
+    //         let executor1 = EXECUTOR1.init(Executor::new());
+    //         executor1.run(|spawner| {
                 
-            spawner.spawn(led_blink(led)).unwrap();
-            });
-        },
-    );
+    //         });
+    //     },
+    // );
 
-    info!("Spawned core 1 tasks");
+    // info!("Spawned core 1 tasks");
 }
 
 
 #[embassy_executor::task]
 async fn led_blink(mut led: Output<'static>) {
-    info!("[LED]: Lets go blinking");
+    info!("[LED]: starting");
     loop {
         led.set_high();
         Timer::after_millis(25).await;

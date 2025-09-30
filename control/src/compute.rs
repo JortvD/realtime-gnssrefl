@@ -5,7 +5,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
+    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -14,17 +14,19 @@ const QC_MIN_PEAK_TO_MEAN: f32 = 3.0;
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
-const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 4;
+const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 1;
 
 const MIN_HEIGHT: f32 = 2.0;
 const MAX_HEIGHT: f32 = 7.0;
 const STEP_SIZE: f32 = 0.05;
 
+const MAX_BINS: usize = 12;
+
 type ArcQueue = Vec<Arc, 256>; // 6 * 256 = 1536 bytes
 type ObservationVec = Vec<Observation, 256>; // 24 * 256 = 6144 bytes
 type RangeVec = Vec<f32, 512>; // 4 * 512 = 1024 bytes
 type AmplVec = Vec<f32, 512>; // 4 * 512 = 1024 bytes
-type SampleVec = Vec<f32, { BIN_BURST_SIZE * 20 }>; // 4 * 240 * 40 = 38400 bytes
+type SampleVec = Vec<f32, { BIN_BURST_SIZE * MAX_BINS }>; // 4 * 240 * 12 = 11520 bytes
 
 #[derive(Debug, Clone, Copy)]
 struct Arc {
@@ -96,12 +98,11 @@ pub async fn task_compute(
     storage: &'static StorageType,
 ) {
     loop {
-        info!("[task_compute]: Wait for request");
+        info!("[comp] waiting for request");
         let message = channel_req.receive().await;
-        info!("[task_compute]: request received");
         match message {
             ComputeReqMsg::Compute { sector, config } => {
-                info!("[task_compute]: starting computation for sector {}", sector.get_index());
+                info!("[comp] starting computation for sector {}", sector.get_index());
                 run_compute(sector, storage, config).await;
                 channel_res.send(ComputeResMsg::Success).await;
             }
@@ -129,7 +130,7 @@ async fn run_compute(
         queue = build_arc_queue(&sector, &bin_storage, storage, &mut io_buf);
     }
     info!(
-        "[compute] created queue with {} arcs in {} ms",
+        "[comp] created queue with {} arcs in {} ms",
         queue.len(),
         (Instant::now() - start).as_millis()
     );
@@ -137,7 +138,7 @@ async fn run_compute(
     let start = Instant::now();
     let (range, size) = lin_range(MIN_HEIGHT, MAX_HEIGHT, STEP_SIZE);
     info!(
-        "[compute] generated linear range with {} steps in {} ms",
+        "[comp] generated linear range with {} steps in {} ms",
         size,
         (Instant::now() - start).as_millis()
     );
@@ -148,8 +149,6 @@ async fn run_compute(
     let mut times: SampleVec = Vec::new(); // 38400 bytes
     let mut elevs: SampleVec = Vec::new(); // 38400 bytes
     let mut snrs: SampleVec = Vec::new(); // 38400 bytes
-    let mut x: SampleVec = Vec::new(); // 38400 bytes
-    let mut y: SampleVec = Vec::new(); // 38400 bytes
     let mut ampls: AmplVec = Vec::new(); // 1024 bytes
 
     let total_arcs: usize = queue.len(); 
@@ -157,7 +156,7 @@ async fn run_compute(
     for (idx, arc) in queue.iter().enumerate() {
         let full_start = Instant::now();
         info!(
-            "[compute][{:03}/{:03}] arc sat {}, {}..{}",
+            "[comp][{:03}/{:03}] arc sat {}, {}..{}",
             idx,
             total_arcs,
             arc.id,
@@ -170,8 +169,6 @@ async fn run_compute(
         elevs.clear();
         snrs.clear();
         ampls.clear();
-        x.clear();
-        y.clear();
 
         // Stream through storage and collect all records for this arc.
         let start = Instant::now();
@@ -191,7 +188,7 @@ async fn run_compute(
             );
         }
         info!(
-            "[compute][{:03}/{:03}] fetched {} records in {} ms",
+            "[comp][{:03}/{:03}] fetched {} records in {} ms",
             idx,
             total_arcs,
             num_records,
@@ -199,7 +196,7 @@ async fn run_compute(
         );
 
         // if num_records < QC_MIN_SAMPLES {
-        //     info!("[compute][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
+        //     info!("[comp][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
         //     continue;
         // }
 
@@ -207,7 +204,7 @@ async fn run_compute(
         let start = Instant::now();
         math::polyfit_and_smooth_no_std(&times, &mut elevs);
         info!(
-            "[compute][{:03}/{:03}] smoothed elevation in {} ms",
+            "[comp][{:03}/{:03}] smoothed elevation in {} ms",
             idx,
             total_arcs,
             (Instant::now() - start).as_millis()
@@ -217,7 +214,7 @@ async fn run_compute(
         let (net, band) = first_net_band.unwrap_or((0, false));
         let (freq_hz, cf) = compute_cf(net, band);
         info!(
-            "[compute][{:03}/{:03}] freq {} MHz, cf {} (net {}, band {})",
+            "[comp][{:03}/{:03}] freq {} MHz, cf {} (net {}, band {})",
             idx,
             total_arcs,
             freq_hz / 1_000_000.0,
@@ -228,56 +225,35 @@ async fn run_compute(
 
         // Transform samples: x = sin(e)/cf, y = snr.
         let start = Instant::now();
-        transform_xy(&elevs, &snrs, cf, &mut x, &mut y);
+        transform_xy(&mut elevs, cf);
         info!(
-            "[compute][{:03}/{:03}] computed {} transformed samples in {} ms",
+            "[comp][{:03}/{:03}] computed {} transformed samples in {} ms",
             idx,
             total_arcs,
-            x.len(),
+            elevs.len(),
             (Instant::now() - start).as_millis()
         );
 
         // In-place sort x and y together (no extra memory).
         let start = Instant::now();
-        quicksort_xy(&mut x, &mut y);
+        quicksort_xy(&mut elevs, &mut snrs);
         info!(
-            "[compute][{:03}/{:03}] sorted {} pairs in {} ms",
+            "[comp][{:03}/{:03}] sorted {} pairs in {} ms",
             idx,
             total_arcs,
-            x.len(),
+            elevs.len(),
             (Instant::now() - start).as_millis()
         );
 
         for _ in 0..size {
             ampls.push(0.0).ok();
         }
-
-        const N: usize = BIN_BURST_SIZE * 20; // your previous bound
-
-        // Use stack-allocated arrays instead of mutable statics.
-        // let mut yv:  [f32; N] = [0.0; N];
-        // let mut sw:  [i16; N] = [0; N];
-        // let mut cw:  [i16; N] = [0; N];
-        // let mut sd:  [i16; N] = [0; N];
-        // let mut cd:  [i16; N] = [0; N];
-
-        // // In your task (single-threaded over the buffers):
-        // let mut sc = LsScratch {
-        //     yv:  &mut yv,
-        //     s_w: &mut sw,
-        //     c_w: &mut cw,
-        //     s_d: &mut sd,
-        //     c_d: &mut cd,
-        // };
-
-        let f0 = MIN_HEIGHT;
-        let df = STEP_SIZE;
-        let m = size;
+       
 
         let start = Instant::now();
-        math::lombscargle_no_std(&x, &y, &range, &mut ampls);
+        math::lombscargle_no_std::<{ BURST_SIZE * MAX_BINS }>(&elevs, &snrs, MIN_HEIGHT, STEP_SIZE, size, &mut ampls);
         info!(
-            "[compute][{:03}/{:03}] Lomb-Scargle in {} ms",
+            "[comp][{:03}/{:03}] Lomb-Scargle in {} ms",
             idx,
             total_arcs,
             (Instant::now() - start).as_millis()
@@ -295,11 +271,11 @@ async fn run_compute(
                 used: false,
             });
         } else {
-            info!("[compute][{:03}/{:03}] no valid amplitude values, skipping", idx, total_arcs);
+            info!("[comp][{:03}/{:03}] no valid amplitude values, skipping", idx, total_arcs);
         }
 
         info!(
-            "[compute][{:03}/{:03}] finished arc in {} ms",
+            "[comp][{:03}/{:03}] finished arc in {} ms",
             idx,
             total_arcs,
             (Instant::now() - full_start).as_millis()
@@ -312,21 +288,21 @@ async fn run_compute(
     for observation in &mut observations {
         if observation.max_amp < QC_MIN_MAX_AMP {
             info!(
-                "[compute] sat {} ({}..{}) - max_amp {} too low, skipping",
+                "[comp] sat {} ({}..{}) - max_amp {} too low, skipping",
                 observation.sat_id, observation.start_time, observation.end_time, observation.max_amp
             );
             continue;
         }
         else if observation.peak_to_mean() < QC_MIN_PEAK_TO_MEAN {
             info!(
-                "[compute] sat {} ({}..{}) - peak/mean {} too low, skipping",
+                "[comp] sat {} ({}..{}) - peak/mean {} too low, skipping",
                 observation.sat_id, observation.start_time, observation.end_time, observation.peak_to_mean()
             );
             continue;
         }
 
         info!(
-            "[compute] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {}",
+            "[comp] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {}",
             observation.sat_id, observation.start_time, observation.end_time,
             observation.max_amp, observation.max_rh, observation.mean_amp,
             observation.peak_to_mean(), observation.num_recs
@@ -348,7 +324,13 @@ async fn run_compute(
 
     let rh_std = sqrtf(rh_std_sum / used_count as f32);
 
-    let mut measurement = Measurement::new(queue.len() as u32, sector.get_start_time(), sector.get_end_time(), rh_mean, rh_std);
+    let mut measurement = Measurement::new(
+        queue.len() as u32, 
+        sector.get_start_time(), 
+        sector.get_end_time(), 
+        rh_mean, 
+        rh_std
+    );
 
     for observation in observations {
         measurement.push(observation);
@@ -362,7 +344,7 @@ async fn run_compute(
 
     if used_count > 0 {
         info!(
-            "[compute] overall mean rh: {} (std {}, samples {}) in {} ms",
+            "[comp] overall mean rh: {} (std {}, samples {}) in {} ms",
             rh_mean,
             rh_std,
             used_count,
@@ -370,7 +352,7 @@ async fn run_compute(
         );
     } else {
         info!(
-            "[compute] no valid observations in {} ms",
+            "[comp] no valid observations in {} ms",
             (Instant::now() - total_start).as_millis()
         );
         return;
@@ -412,12 +394,11 @@ fn lin_range(start: f32, end: f32, step_size: f32) -> (Vec<f32, 512>, usize) {
 }
 
 #[inline]
-fn transform_xy(elevs: &SampleVec, snrs: &SampleVec, cf: f32, x: &mut SampleVec, y: &mut SampleVec) {
+fn transform_xy(elevs: &mut SampleVec, cf: f32) {
     let inv_cf = 1.0 / cf;
-    for i in 0..snrs.len() {
+    for i in 0..elevs.len() {
         let s = sinf(elevs[i].to_radians()) * inv_cf;
-        x.push(s).ok();
-        y.push(snrs[i]).ok();
+        elevs[i] = s;
     }
 }
 
@@ -456,7 +437,7 @@ fn build_arc_queue(
 ) -> ArcQueue {
     let mut queue: ArcQueue = Vec::new();
 
-    info!("[compute] building arc queue for sector {}", sector.get_index());
+    info!("[comp] building arc queue for sector {}", sector.get_index());
 
     for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
         let id = rec.get_id();

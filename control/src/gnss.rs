@@ -1,4 +1,3 @@
-use defmt::info;
 use embassy_rp::uart;
 use embassy_time::Instant;
 

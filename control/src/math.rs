@@ -1,3 +1,5 @@
+#![no_std]
+
 use core::f32::consts::PI;
 
 /// Kahan compensated addition (f32).
@@ -9,19 +11,46 @@ fn kahan_add(sum: &mut f32, c: &mut f32, x: f32) {
     *sum = t;
 }
 
-/// Lomb–Scargle (unweighted, Scargle 1982), no_std, f32.
-/// Drop-in optimized general version: packs valid samples, precomputes 2πt.
+// -------- Fixed-point helpers (i16 <-> [-1, 1]) --------
+
 #[inline(always)]
-pub fn lombscargle_no_std(
+fn q_from_f32(x: f32) -> i16 {
+    // clamp to [-1,1], then map to i16 range [-32767, 32767]
+    const SCALE: f32 = 32767.0;
+    let y = if x > 1.0 { 1.0 } else if x < -1.0 { -1.0 } else { x };
+    (y * SCALE) as i16
+}
+
+#[inline(always)]
+fn f32_from_q(q: i16) -> f32 {
+    const INV_SCALE: f32 = 1.0 / 32767.0;
+    (q as f32) * INV_SCALE
+}
+
+/// Scratch buffers for the uniform-grid accelerator, memory-reduced.
+/// All slices must have length >= number of valid (finite) samples.
+pub struct LsScratch<'a, const CAP: usize> {
+    /// packed (y - mean), kept in f32 for accuracy in accumulations
+    pub yv:  &'a mut [f32; CAP],
+    /// sin(ω_k t_i) current, quantized
+    pub s_w: &'a mut [i16; CAP],
+    /// cos(ω_k t_i) current, quantized
+    pub c_w: &'a mut [i16; CAP],
+    /// sin(Δω t_i), constant across k, quantized
+    pub s_d: &'a mut [i16; CAP],
+    /// cos(Δω t_i), constant across k, quantized
+    pub c_d: &'a mut [i16; CAP],
+}
+
+#[inline(always)]
+fn pack_center_and_init<const CAP: usize>(
     x: &[f32],
     y: &[f32],
-    frequencies: &[f32],
-    power_out: &mut [f32],
+    f0_omega: f32,
+    d_omega: f32,
+    sc: &mut LsScratch<'_, CAP>,
 ) -> usize {
-    let m = core::cmp::min(frequencies.len(), power_out.len());
-    if m == 0 { return 0; }
-
-    // Pass 0: mean over finite pairs
+    // mean over finite
     let len = core::cmp::min(x.len(), y.len());
     let (mut sum_y, mut comp_y) = (0.0f32, 0.0f32);
     let mut n = 0usize;
@@ -32,118 +61,146 @@ pub fn lombscargle_no_std(
             n += 1;
         }
     }
-    if n == 0 {
-        for d in &mut power_out[..m] { *d = 0.0; }
-        return m;
-    }
+    if n == 0 { return 0; }
     let mean_y = sum_y / (n as f32);
 
-    // Pack valid pairs + precompute phi = 2π t, and centered yv.
-    // We reuse power_out's tail as a tiny temp when m < n? No—keep code simple and safe.
-    // Ask caller for modest stack? We'll keep fixed on stack up to len via small rolling buffer:
-    // Since we promised "no allocation", we do two passes per frequency if n is huge; still faster due to no finiteness branches.
-    let mut count = 0usize;
+    // pack & precompute sin/cos at ω0 t and Δω t (quantized)
+    let mut j = 0usize;
+    for i in 0..len {
+        let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
+        if !(ti.is_finite() && yi.is_finite()) { continue; }
 
-    // To avoid dynamic alloc, we create small on-stack scratch windows. For MCUs, this is cheap.
-    // We’ll pre-pack into fixed stack chunks and process chunk-by-chunk.
-    const CHUNK: usize = 256; // tune to L1 & your cache/flash wait states
-    let mut buf_phi = [0.0f32; CHUNK];
-    let mut buf_yv  = [0.0f32; CHUNK];
+        sc.yv[j] = yi - mean_y;
+
+        let a0 = f0_omega * ti;
+        let (s0, c0) = libm::sincosf(a0);
+        sc.s_w[j] = q_from_f32(s0);
+        sc.c_w[j] = q_from_f32(c0);
+
+        let d = d_omega * ti;
+        let (sd, cd) = libm::sincosf(d);
+        sc.s_d[j] = q_from_f32(sd);
+        sc.c_d[j] = q_from_f32(cd);
+
+        j += 1;
+        if j == CAP { break; } // hard cap safety
+    }
+    j
+}
+
+/// Ultra-fast Lomb–Scargle for **uniform frequency grid**:
+/// frequencies: f_k = f0 + k*df, for k in [0, m).
+/// Writes min(m, power_out.len()) powers.
+/// Returns number written.
+///
+/// Memory-optimized version:
+/// - stores sin/cos tables as i16 fixed-point
+/// - drops unused packed time buffer
+#[inline(always)]
+pub fn lombscargle_no_std<const CAP: usize>(
+    x: &[f32],
+    y: &[f32],
+    f0: f32,
+    df: f32,
+    m: usize,
+    power_out: &mut [f32],
+) -> usize {
+    let m = core::cmp::min(m, power_out.len());
+    if m == 0 { return 0; }
 
     const TWO_PI: f32 = PI * 2.0;
     const EPS: f32 = 1.0e-7;
 
-    // Indices of valid pairs (single pass materialization as we stream chunks)
-    // We’ll rescan x/y to refill the chunk; avoids heap.
-    // Helper closure to (re)fill a chunk starting at `start_idx`, returning (filled, next_start).
-    #[inline(always)]
-    fn refill_chunk(
-        x: &[f32], y: &[f32], start: usize,
-        buf_phi: &mut [f32; CHUNK],
-        buf_yv:  &mut [f32; CHUNK],
-        mean_y: f32
-    ) -> (usize, usize) {
-        let len = core::cmp::min(x.len(), y.len());
-        let mut filled = 0usize;
-        let mut i = start;
-        while i < len && filled < CHUNK {
-            let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
-            if ti.is_finite() && yi.is_finite() {
-                buf_phi[filled] = TWO_PI * ti;
-                buf_yv [filled] = yi - mean_y;
-                filled += 1;
-            }
-            i += 1;
-        }
-        (filled, i)
+    let omega0 = TWO_PI * f0;
+    let domega = TWO_PI * df;
+
+     // Use stack-allocated arrays instead of mutable statics.
+    let mut yv:  [f32; CAP] = [0.0; CAP];
+    let mut sw:  [i16; CAP] = [0; CAP];
+    let mut cw:  [i16; CAP] = [0; CAP];
+    let mut sd:  [i16; CAP] = [0; CAP];
+    let mut cd:  [i16; CAP] = [0; CAP];
+
+    // In your task (single-threaded over the buffers):
+    let mut sc = LsScratch {
+        yv:  &mut yv,
+        s_w: &mut sw,
+        c_w: &mut cw,
+        s_d: &mut sd,
+        c_d: &mut cd,
+    };
+
+    // Pack/center + init quantized sin/cos tables
+    let n = pack_center_and_init(x, y, omega0, domega, &mut sc);
+    if n == 0 {
+        for d in &mut power_out[..m] { *d = 0.0; }
+        return m;
     }
 
-    // Evaluate each frequency
+    // For each frequency k
     for k in 0..m {
-        let f = frequencies[k];
-        if f.abs() < EPS {
-            power_out[k] = 0.0;
-            continue;
-        }
-
-        let omega  = TWO_PI * f;
-        // Pass 1: tau via sums of sin(2ωt), cos(2ωt)
+        // --- Pass 1: tau from current sin(ωt), cos(ωt)
         let (mut s2, mut c2) = (0.0f32, 0.0f32);
         let (mut cs2, mut cc2) = (0.0f32, 0.0f32);
-
-        let mut start = 0usize;
-        loop {
-            let (filled, next) = refill_chunk(x, y, start, &mut buf_phi, &mut buf_yv, mean_y);
-            if filled == 0 { break; }
-            // use phi (2πt) to save a mul
-            for i in 0..filled {
-                let a2 = (omega + omega) * (buf_phi[i] / TWO_PI); // a2 = 2ωt; but we only have φ=2πt
-                // more efficient: a2 = (2ω/2π) * φ = (ω/π) * φ
-                // But keep it numerically stable:
-                let a2 = (omega / PI) * buf_phi[i];
-                let (s_2a, c_2a) = libm::sincosf(a2);
-                kahan_add(&mut s2, &mut cs2, s_2a);
-                kahan_add(&mut c2, &mut cc2, c_2a);
-            }
-            start = next;
+        // sin(2a)=2sc; cos(2a)=c^2-s^2
+        for i in 0..n {
+            let s = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+            let c = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
+            kahan_add(&mut s2, &mut cs2, 2.0 * s * c);
+            kahan_add(&mut c2, &mut cc2, c * c - s * s);
         }
-
         let omega_tau = 0.5 * libm::atan2f(s2, c2);
         let (s_tau, c_tau) = libm::sincosf(omega_tau);
 
-        // Pass 2: accumulate at shifted phase using rotation
+        // --- Pass 2: rotate by τ, accumulate
         let (mut yc, mut ys) = (0.0f32, 0.0f32);
         let (mut cyc, mut cys) = (0.0f32, 0.0f32);
         let (mut cc, mut ss)  = (0.0f32, 0.0f32);
 
-        let mut start2 = 0usize;
-        loop {
-            let (filled, next) = refill_chunk(x, y, start2, &mut buf_phi, &mut buf_yv, mean_y);
-            if filled == 0 { break; }
-            for i in 0..filled {
-                let a = (omega / TWO_PI) * buf_phi[i]; // a = ωt = (ω/2π) * (2πt)
-                let (s, c) = libm::sincosf(a);
+        for i in 0..n {
+            let s = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+            let c = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
 
-                let s_shift = s * c_tau - c * s_tau;
-                let c_shift = c * c_tau + s * s_tau;
+            // rotate (s,c) -> (s_shift, c_shift)
+            let s_shift = s * c_tau - c * s_tau;
+            let c_shift = c * c_tau + s * s_tau;
 
-                let yv = buf_yv[i];
-                kahan_add(&mut yc, &mut cyc, yv * c_shift);
-                kahan_add(&mut ys, &mut cys, yv * s_shift);
+            let yv = unsafe { *sc.yv.get_unchecked(i) };
+            kahan_add(&mut yc, &mut cyc, yv * c_shift);
+            kahan_add(&mut ys, &mut cys, yv * s_shift);
 
-                cc += c_shift * c_shift;
-                ss += s_shift * s_shift;
-            }
-            start2 = next;
+            cc += c_shift * c_shift;
+            ss += s_shift * s_shift;
         }
 
         let pc = if cc > EPS { (yc * yc) / cc } else { 0.0 };
         let ps = if ss > EPS { (ys * ys) / ss } else { 0.0 };
         power_out[k] = 0.5 * (pc + ps);
+
+        // --- Advance sin/cos to next frequency using angle addition with Δω
+        // sin' = s*cΔ + c*sΔ ; cos' = c*cΔ - s*sΔ
+        if k + 1 < m {
+            for i in 0..n {
+                let s  = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+                let c  = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
+                let sd = f32_from_q(unsafe { *sc.s_d.get_unchecked(i) });
+                let cd = f32_from_q(unsafe { *sc.c_d.get_unchecked(i) });
+
+                let s_next = s * cd + c * sd;
+                let c_next = c * cd - s * sd;
+
+                unsafe {
+                    *sc.s_w.get_unchecked_mut(i) = q_from_f32(s_next);
+                    *sc.c_w.get_unchecked_mut(i) = q_from_f32(c_next);
+                }
+            }
+        }
     }
 
     m
 }
+
+
 
 use core::cmp::min;
 

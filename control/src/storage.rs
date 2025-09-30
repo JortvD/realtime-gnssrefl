@@ -44,7 +44,9 @@ impl FlashStorage {
         let start_time = if self.timing { Some(Instant::now()) } else { None };
         let addr = self.get_container_address(container_id) + offset;
 
-        info!("Writing {} bytes to flash at address {}", data.len(), addr);
+        if self.timing {
+            info!("Writing {} bytes to flash at address {}", data.len(), addr);
+        }
 
         self.flash.blocking_write(addr, &data)?;
 
@@ -65,7 +67,9 @@ impl FlashStorage {
         let addr = self.get_container_address(container_id) + offset;
         let buf_len = buffer.len();
 
-        info!("Reading {} bytes from flash at address {}", buf_len, addr);
+        if self.timing {
+            info!("Reading {} bytes from flash at address {}", buf_len, addr);
+        }
 
         self.flash.blocking_read(addr, &mut buffer[..buf_len])?;
 
@@ -85,7 +89,9 @@ impl FlashStorage {
         let start = self.get_container_address(container_id) + start_offset;
         let end = self.get_container_address(container_id) + end_offset;
 
-        info!("Erasing flash from address {} to {}", start, end);
+        if self.timing {
+            info!("Erasing flash from address {} to {}", start, end);
+        }
 
         self.flash.blocking_erase(start, end)?;
 

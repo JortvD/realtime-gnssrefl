@@ -4,7 +4,7 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channe
 use heapless::Vec;
 
 use crate::control::{MeasureReqMsg, MeasureResMsg};
-use crate::StorageType;
+use crate::{utils, StorageType};
 use crate::{gnss::GNSSSensor, storage::{BinStorage, FlashStorage}, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
 
 #[embassy_executor::task]
@@ -16,23 +16,22 @@ pub async fn task_measure(
 ) {
     // Get sector & config
     loop {
-        info!("[task_measure]: Wait for request");
+        info!("[meas] Wait for request");
         let message = channel_req.receive().await;
-        info!("[task_measure]: request received");
         match message {
             MeasureReqMsg::GetRefTime => {
-                {
-                    let (reftime, refdate) = get_time(&mut gnss_sensor).await;
-                    channel_res.send(MeasureResMsg::GiveRefTime { reftime, refdate }).await;
+                info!("[meas] fetching reference time from GNSS");
+                if let Some((reftime, refdate)) = get_time(&mut gnss_sensor).await {
+                    channel_res.send(MeasureResMsg::RefTimeSuccess{ reftime, refdate }).await;
+                } else {
+                    channel_res.send(MeasureResMsg::RefTimeFail).await;
                 }
             }
             MeasureReqMsg::MeasureSector { sector, config } => {
-                {
-                    run_measure(&mut gnss_sensor, storage, &sector, &config).await;
-                    channel_res.send(MeasureResMsg::SectorSuccess).await;
-                }
+                info!("[meas] starting measurement for sector {}", sector.get_index());
+                run_measure(&mut gnss_sensor, storage, &sector, &config).await;
+                channel_res.send(MeasureResMsg::SectorSuccess).await;
             }
-            
         }
     }
     
@@ -41,34 +40,35 @@ pub async fn task_measure(
 async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) {
     let bin_storage = BinStorage::new(config.seconds_per_bin);
     let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
-    let mut last_bin_id: u32 = sector.get_start_bin_id();
+    let mut last_bin_id: u32 = sector.get_start_bin_index();
 
     loop {
         let nmeaburst= gnss_sensor.read_burst().await;
-        info!("[measure][????????] received NMEA burst of {} bytes in {} ms", nmeaburst.bytes, nmeaburst.duration.as_millis());
-        let start_time = Instant::now();
-
-        // A full burst has been collected, do something with it
         let burst = gnss_sensor.parser.parse_burst(&nmeaburst, false);
-
         let time_str = seconds_to_time_str(burst.time);
 
         if sector.is_time_before_sector(burst.time) {
-            info!("[measure][{}] time is before current sector, skipping", time_str.as_str());
+            info!("[meas][{}] time is before current sector, skipping", time_str.as_str());
             continue;
         }
 
         if burst.time == u32::MAX {
-            info!("[measure][{}] no valid GPS time in burst, skipping", time_str.as_str());
+            info!("[meas][{}] no valid GPS time in burst, skipping", time_str.as_str());
             continue;
         }
 
         if sector.is_time_after_sector(burst.time) {
-            info!("[measure][{}] time is later than current sector, STOPPING", time_str.as_str());
+            info!("[meas][{}] time is later than current sector, STOPPING", time_str.as_str());
             break;
         }
 
-        info!("[measure][{}] parsed burst with {} samples", time_str.as_str(), burst.num);
+        info!(
+            "[meas][{}] received {} bytes in {} ms and parsed {} valid samples", 
+            time_str.as_str(),
+            nmeaburst.bytes,
+            nmeaburst.duration.as_millis(),
+            burst.samples.len()
+        );
 
         let bin_id = sector.get_bin_for_time(burst.time);
 
@@ -79,7 +79,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
                 bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
             }
             bin_data.clear();
-            info!("[measure][{}] switched to new bin {}, wrote previous bin {} to storage", time_str.as_str(), bin_id, last_bin_id);
+            info!("[meas][{}] switched to new bin {}, wrote previous bin {} to storage", time_str.as_str(), bin_id, last_bin_id);
             last_bin_id = bin_id;
         }
 
@@ -87,8 +87,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
 
         bin_data.extend_from_slice(&data).expect("Bin data overflow");
 
-        let elapsed = Instant::now() - start_time;
-        info!("[measure][{}] burst added to cached bin {}, elapsed {} ms, cache size {} bytes", time_str.as_str(), bin_id, elapsed.as_millis(), bin_data.len());
+        info!("[meas][{}] burst added to current bin {} (size: {} bytes)", time_str.as_str(), bin_id, bin_data.len());
     }
 
     {
@@ -97,11 +96,22 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
     }
     bin_data.clear();
-    info!("[measure][????????] wrote last bin {} to storage", last_bin_id);
+    info!("[meas] wrote last bin {} to storage", last_bin_id);
 }
 
-pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> (u32, u32) {
+pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(u32, u32)> {
+    gnss_sensor.read_burst().await;
     let nmeaburst = gnss_sensor.read_burst().await;
     let burst = gnss_sensor.parser.parse_burst(&nmeaburst, true);
-    (burst.time, burst.date.unwrap_or(0))
+    if let Some(date) = burst.date {
+        if date > 40000 {
+            let date = utils::date_from_days(date as i64);
+            info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
+            None
+        } else {
+            Some((burst.time, date))
+        }
+    } else {
+        None
+    }
 }

@@ -1,9 +1,11 @@
 use defmt::info;
 use heapless::{Vec, String};
 
+use crate::utils;
+
 // NMEA processing
-pub const NMEA_MAX_LINES: usize = 128;
-pub const NMEA_LINE_LEN: usize = 256;
+pub const NMEA_MAX_LINES: usize = 64;
+pub const NMEA_LINE_LEN: usize = 128;
 
 pub type Nmealine = String<NMEA_LINE_LEN>;
 pub type NmeaBurst = Vec<Nmealine,NMEA_MAX_LINES>;
@@ -22,7 +24,7 @@ pub const START_ADDRESS: u32 = 0x100000; // Start at 1MB offset (flash-relative)
 pub const NUM_BINS: usize = 50;
 pub const BINS_CONTAINER_START: usize = 0;
 // 50: measurements (1 container)
-pub const NUM_MEASUREMENTS: usize = 1;
+pub const NUM_MEASUREMENTS: usize = NUM_CONTAINER_BLOCKS;
 pub const MEASUREMENTS_CONTAINER_START: usize = 50;
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
@@ -41,8 +43,7 @@ pub struct Config {
     pub pre_min_azimuth: u32,
     pub pre_max_azimuth: u32,
 
-    pub sector_measure_duration: u32,
-    pub sector_midpoints: Vec<u32, 24>,
+    pub sector_mid_times: Vec<u32, 24>,
 
     pub bins_per_sector: u32,
     pub seconds_per_bin: u32,
@@ -50,20 +51,38 @@ pub struct Config {
     pub num_send_measurements: u32,
 }
 
+impl Config {
+    pub fn get_mid_times_as_str(&self) -> String<128> {
+        let mut mid_times_str = String::<128>::new();
+        for (idx, &midpoint) in self.sector_mid_times.iter().enumerate() {
+            let time_str = utils::seconds_to_time_str(midpoint);
+            mid_times_str.push_str(&time_str).unwrap();
+            if idx < self.sector_mid_times.len() - 1 {
+                mid_times_str.push_str(", ").unwrap();
+            }
+        }
+        mid_times_str
+    }
+
+    pub fn get_measure_duration(&self) -> u32 {
+        return self.bins_per_sector*self.seconds_per_bin;
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
-        let mut midpoints = Vec::<u32, 24>::new();
-        midpoints.push(68121 + 30 + 25).unwrap();
+        let mut mid_times = Vec::<u32, 24>::new();
+        mid_times.push(45640 + 120).unwrap();
+        mid_times.push(45640 + 120 + 240 + 10).unwrap();
         Self {
             pre_min_elevation: 10,
             pre_max_elevation: 30,
             pre_min_azimuth: 50,
             pre_max_azimuth: 150,
-            sector_measure_duration: 60,
-            sector_midpoints: midpoints,
+            sector_mid_times: mid_times,
 
             bins_per_sector: 1,
-            seconds_per_bin: 60,
+            seconds_per_bin: 240,
 
             num_send_measurements: 3,
         }
@@ -73,7 +92,7 @@ impl Default for Config {
 #[derive(Clone, Debug)]
 pub struct Sector {
     index: u32,
-    start_bin_id: u32,
+    start_bin_index: u32,
     start_time: u32,
     n_bins: u32,
 
@@ -81,10 +100,10 @@ pub struct Sector {
 }
 
 impl Sector {
-    pub fn new(index: u32, start_bin_id: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
+    pub fn new(index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
         Self {
             index,
-            start_bin_id,
+            start_bin_index,
             start_time,
             n_bins,
             seconds_per_bin,
@@ -95,8 +114,8 @@ impl Sector {
         self.index
     }
 
-    pub fn get_start_bin_id(&self) -> u32 {
-        self.start_bin_id
+    pub fn get_start_bin_index(&self) -> u32 {
+        self.start_bin_index
     }
 
     pub fn get_start_time(&self) -> u32 {
@@ -110,14 +129,14 @@ impl Sector {
     pub fn get_bins(&self) -> Vec<u32, 128> {
         let mut bins = Vec::<u32, 128>::new();
         for i in 0..self.n_bins {
-            bins.push((self.start_bin_id + i) % NUM_BINS as u32).unwrap();
+            bins.push((self.start_bin_index + i) % NUM_BINS as u32).unwrap();
         }
         bins
     }
 
     pub fn get_bin_for_time(&self, time: u32) -> u32 {
         let dt = time - self.start_time;
-        let bin_id = self.start_bin_id + dt / self.seconds_per_bin;
+        let bin_id = self.start_bin_index + dt / self.seconds_per_bin;
 
         bin_id % NUM_BINS as u32
     }
@@ -127,7 +146,7 @@ impl Sector {
     }
 
     pub fn is_time_after_sector(&self, time: u32) -> bool {
-        time > self.get_end_time()
+        time >= self.get_end_time()
     }
 }
 

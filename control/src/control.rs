@@ -4,12 +4,15 @@ use core::u32;
 use defmt::info;
 use embassy_time::{Instant, Timer};
 use crate::types::{self, Config, Sector, NUM_MEASUREMENTS};
-use crate::NUM_BINS;
+use crate::{utils, NUM_BINS};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 use heapless::Deque;
 use embassy_futures::select::{select4, Either4};
 
+const SECONDS_PER_DAY: u32 = 86400;
+const SECTOR_MARGIN: u32 = 60;
+const SPEEDUP_FACTOR: u64 = 10;
 
 #[embassy_executor::task]
 pub async fn task_control(
@@ -21,6 +24,12 @@ pub async fn task_control(
     comm_response_channel: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
 ) {
     let config = types::Config::default();
+    info!("[cont] starting");
+    info!(
+        "[cont] configuration: [{}] measurements ({})", 
+        config.get_mid_times_as_str().as_str(),
+        config.sector_mid_times.len()
+    );
     let mut realtime = RealTime::new();
 
     // List of tasks
@@ -42,15 +51,13 @@ pub async fn task_control(
         // Send task to Core 0 if available (get reference time or measure)
         if !core0busy {
             if !realtime_available {
-                info!("[control] requesting reference time from GNSS");
+                info!("[cont] requesting reference time from GNSS");
                 measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
-                info!("[control] requested reference time from GNSS");
                 core0busy = true;
             } else
             if let Some(sector) = sector.front() {
-                info!("[control] requesting measurement for sector {}", sector.get_index());
+                info!("[cont] requesting measurement for sector {}", sector.get_index());
                 measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: sector.clone(), config: config.clone() }).await;
-                info!("[control] requested measurement for sector {}", sector.get_index());
                 core0busy = true;
             }
         }
@@ -58,52 +65,54 @@ pub async fn task_control(
         // Send task to Core 1 if available (compute or communicate)
         if !core1busy {
             if let Some(sector) = list_measured.front() {
-                info!("[control] requesting computation for sector {}", sector.get_index());
+                info!("[cont] requesting computation for sector {}", sector.get_index());
                 compute_request_channel.send(ComputeReqMsg::Compute { sector: sector.clone(), config: config.clone() }).await;
-                info!("[control] requested computation for sector {}", sector.get_index());
                 core1busy = true;
             } else
             if let Some(sector) = list_computed.front() {
-                info!("[control] requesting communication for sector {}", sector.get_index());
+                info!("[cont] requesting communication for sector {}", sector.get_index());
                 comm_request_channel.send(CommReqMsg::Send { sector: sector.clone(), config: config.clone()}).await;
-                info!("[control] requested communication for sector {}", sector.get_index());
                 core1busy = true;
             }
         }
 
         // Wait for responses
-        info!("[control] waiting for events");
+        info!("[cont] waiting for events");
         let result = select4(
             &mut next_timer_future,
             measure_response_channel.receive(),
             compute_response_channel.receive(),
             comm_response_channel.receive(),
         ).await;
-        info!("[control] event received");
         match result {
             Either4::First(_) => {
                 next_timer_future = Timer::after_secs(u32::max_value() as u64);
-                info!("[control] next sector timer expired, getting next sector");
+                info!("[cont] next sector timer expired, getting next sector");
                 sector.push_back(next_sector.pop_front().unwrap()).unwrap();
+                // 5 sec before next_sector
+                let (ns, ntf) = next_sector_timer(&config, &realtime, SECTOR_MARGIN);
+                next_sector.push_front(ns).unwrap();
+                next_timer_future = ntf;
             }
             Either4::Second(measure_res_msg) => {
                 match measure_res_msg {
-                    MeasureResMsg::GiveRefTime { reftime, refdate} => {
-                        info!("[control] received reference time from GNSS: {} s, {}", reftime, refdate);
+                    MeasureResMsg::RefTimeSuccess { reftime, refdate} => {
+                        info!("[cont] received reference time from GNSS");
                         realtime.update_ref(reftime, refdate);
                         realtime_available = true;
-                        let (ns, ntf) = next_sector_timer(&config, &realtime);
+                        let (ns, ntf) = next_sector_timer(&config, &realtime, 0);
                         next_sector.push_front(ns).unwrap();
                         next_timer_future = ntf;
                         core0busy = false;
                     },
+                    MeasureResMsg::RefTimeFail {} => {
+                        info!("[cont] getting ref time failed");
+                        core0busy = false;
+                    }
                     MeasureResMsg::SectorSuccess { } => {
-                        info!("[control] received sector measurement success from GNSS");
+                        info!("[cont] received sector measurement success from GNSS");
                         let sector = sector.pop_front().unwrap();
                         list_measured.push_back(sector).unwrap();
-                        let (ns, ntf) = next_sector_timer(&config, &realtime);
-                        next_sector.push_front(ns).unwrap();
-                        next_timer_future = ntf;
                         core0busy = false;
                     },
                     _ => {}
@@ -112,7 +121,7 @@ pub async fn task_control(
             Either4::Third(compute_res_msg) => {
                 match compute_res_msg {
                     ComputeResMsg::Success => {
-                        info!("[control] received computation success from core 1");
+                        info!("[cont] received computation success from core 1");
                         let sector = list_measured.pop_front().unwrap();
                         list_computed.push_back(sector).unwrap();
                         core1busy = false;
@@ -123,7 +132,7 @@ pub async fn task_control(
             Either4::Fourth(comm_res_msg) => {
                 match comm_res_msg {
                     CommResMsg::Success => {
-                        info!("[control] received communication success from core 1");
+                        info!("[cont] received communication success from core 1");
                         list_computed.pop_front().unwrap();
                         core1busy = false;
                     }
@@ -143,10 +152,11 @@ pub enum MeasureReqMsg {
 }
 
 pub enum MeasureResMsg {
-    GiveRefTime {
+    RefTimeSuccess {
         reftime: u32,
         refdate: u32,
     },
+    RefTimeFail,
     SectorSuccess,
     SectorFail, 
 }
@@ -186,12 +196,13 @@ impl RealTime {
         Self {
             ref_real_date: 0,
             ref_real_time: 0,
-            ref_pico_time: Instant::now(),
+            ref_pico_time: Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR)
         }
     }
 
     fn get_real_time(&self) -> u32 {
-        let time = self.ref_real_time + Instant::now().duration_since(self.ref_pico_time).as_secs() as u32;
+        let time = self.ref_real_time + Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR)
+        .duration_since(self.ref_pico_time).as_secs() as u32;
         (time % 86400) as u32
     }
 
@@ -202,8 +213,14 @@ impl RealTime {
     fn update_ref(&mut self, ref_time: u32, ref_date: u32) {
         self.ref_real_time = ref_time;
         self.ref_real_date = ref_date;
-        self.ref_pico_time = Instant::now();
-        info!("[control] updated reference time to {} s since 00:00 and date to {} days since 1-1-1970 (pico at {} ms since startup)", ref_time, ref_date, self.ref_pico_time.as_millis());
+        self.ref_pico_time = Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR);
+        info!(
+            "[cont] updated reference time to {} ({}) and date to {} ({}) (pico at {} ms since startup)", 
+            ref_time, 
+            utils::seconds_to_time_str(ref_time).as_str(), 
+            ref_date, utils::date_to_str(ref_date).as_str(), 
+            self.ref_pico_time.as_millis()
+        );
     }
 
     fn next_or_min(vec: &Vec<u32, 24>, x: u32) -> (u32, usize) {
@@ -214,32 +231,40 @@ impl RealTime {
             .unwrap_or((vec[0], 0))
     }
 
+    // Assumes one measurement per day
+    fn subtract_wrapping(t1: u32, t2: u32) -> u32 {
+        (t1 - t2 + SECONDS_PER_DAY) % SECONDS_PER_DAY
+    }
 
-    fn subtract_wrapping(t1: u32, t2: u32) -> u32{
-        (t1 - t2) % 86400
+    fn add_wrapping(t1: u32, t2: u32) -> u32 {
+        (t1 + t2) % SECONDS_PER_DAY
     }
 }
 
 fn next_sector_timer<'a>(
     config: &Config,
     realtime: &RealTime,
+    offset: u32,
 ) -> (Sector, Timer) {
-    let sectors_per_day = config.sector_midpoints.len() as u32;
+    let sectors_per_day = config.sector_mid_times.len() as u32;
+    let half_measure_duration = config.get_measure_duration() / 2;
+    let sector_start_times: Vec<u32, 24> = config
+        .sector_mid_times
+        .iter()
+        .map(|&midpoint| RealTime::subtract_wrapping(midpoint , half_measure_duration))
+        .collect();
+    let expected_time = RealTime::add_wrapping(realtime.get_real_time(), offset);
+    let (start_time, nth_of_day) = RealTime::next_or_min(&sector_start_times, expected_time);
 
-    //TODO: find next startpoint instead of midpoint or risk finding a starttime in the past
-    // Find the next midpoint and its index
-    let (midpoint, nth_of_day) =
-        RealTime::next_or_min(&config.sector_midpoints, realtime.get_real_time());
-
-    // Compute sector start time
-    let start_time = RealTime::subtract_wrapping(midpoint, config.sector_measure_duration / 2);
+    let is_next_day = start_time <= expected_time;
+    let sector_day = if is_next_day { realtime.get_days() + 1 } else { realtime.get_days() };
 
     // Compute sector index
-    let sector_index = (realtime.get_days() * sectors_per_day 
+    let sector_index = (sector_day * sectors_per_day
         + nth_of_day as u32) % NUM_MEASUREMENTS as u32;
 
     // Compute bin range
-    let start_bin_id = (realtime.get_days() * sectors_per_day as u32
+    let start_bin_index = (sector_day * sectors_per_day as u32
         + nth_of_day as u32 * config.bins_per_sector)
         % NUM_BINS as u32;
     let n_bins = config.bins_per_sector;
@@ -247,33 +272,33 @@ fn next_sector_timer<'a>(
     // Create Sector
     let sector = Sector::new(
         sector_index as u32,
-        start_bin_id,
+        start_bin_index,
         start_time,
         n_bins,
         config.seconds_per_bin,
     );
 
-    info!("[control] next sector {} starts at {} s since 00:00 with bins {:?}", sector.get_index(), sector.get_start_time(), sector.get_bins().as_slice());
+    info!(
+        "[cont] next sector {} starts at {} s ({}) on day {} ({}) with bins {:?}", 
+        sector.get_index(), 
+        sector.get_start_time(), 
+        utils::seconds_to_time_str(sector.get_start_time()).as_str(),
+        sector_day,
+        utils::date_to_str(sector_day).as_str(),
+        sector.get_bins().as_slice()
+    );
 
-    // Compute sleep duration
-    let sleeptime = (start_time - realtime.get_real_time()) % 86400;
+    // Sleep until start of next sector (could be the next day)
+    let start_time_margin = RealTime::subtract_wrapping(start_time, SECTOR_MARGIN);
+    let sleeptime = RealTime::subtract_wrapping(start_time_margin, realtime.get_real_time());
 
-    info!("[control] sleeping for {} s until next sector starts", sleeptime);
+    info!(
+        "[cont] sleeping from {} ({}) for {} s ({}) until next sector starts", 
+        realtime.get_real_time(),
+        utils::seconds_to_time_str(realtime.get_real_time()).as_str(),
+        sleeptime, 
+        utils::seconds_to_time_str(sleeptime).as_str()
+    );
 
-    // Create timer future
-    let timer_future = Timer::after_secs(sleeptime as u64);
-
-    (sector, timer_future)
+    (sector, Timer::after_millis(sleeptime as u64 * 1000 / SPEEDUP_FACTOR))
 }
-
-// // Assume sector_midpoints is ordered.
-// let sectors_per_day = config.sector_midpoints.len();
-// let (midpoint, sector_index) = RealTime::next_or_min(&config.sector_midpoints, realtime.get_real_time());
-// let start_time = RealTime::subtract_wrapping(midpoint, config.sector_measure_duration / 2);
-
-// let start_bin_id = (realtime.get_days()*sectors_per_day as u32 + sector_index as u32 * config.bins_per_sector) % NUM_BINS as u32; //TODO
-// let n_bins = config.bins_per_sector;
-// let sector = Sector::new(sector_index as u32, start_bin_id, start_time, n_bins, config.seconds_per_bin);
-
-// let sleeptime = start_time - realtime.get_real_time();
-// let mut timer_future = Timer::after_secs(sleeptime as u64);
