@@ -102,7 +102,7 @@ pub async fn task_compute(
         let message = channel_req.receive().await;
         match message {
             ComputeReqMsg::Compute { sector, config } => {
-                info!("[comp] starting computation for sector {}", sector.get_index());
+                info!("[comp] starting computation for sector {}", sector.get_measurement_index());
                 run_compute(sector, storage, config).await;
                 channel_res.send(ComputeResMsg::Success).await;
             }
@@ -339,7 +339,7 @@ async fn run_compute(
     {
         let mut storage_lock = storage.lock().await;
         let storage = storage_lock.as_mut().expect("Storage not initialized");
-        measurement_storage.store(storage, sector.get_index(), measurement);
+        measurement_storage.store(storage, sector.get_measurement_index(), measurement);
     }
 
     if used_count > 0 {
@@ -437,7 +437,7 @@ fn build_arc_queue(
 ) -> ArcQueue {
     let mut queue: ArcQueue = Vec::new();
 
-    info!("[comp] building arc queue for sector {}", sector.get_index());
+    info!("[comp] building arc queue for sector {}", sector.get_measurement_index());
 
     for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
         let id = rec.get_id();

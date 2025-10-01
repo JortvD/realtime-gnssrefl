@@ -87,7 +87,7 @@ pub async fn task_comms(
         ).await;
         match select {
             Either::First(CommReqMsg::Send { sector, config }) => {
-                info!("[comm] starting communication for sector {}", sector.get_index());
+                info!("[comm] starting communication for sector {}", sector.get_measurement_index());
                 run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
                 channel_res.send(CommResMsg::Success).await;
             }
@@ -138,14 +138,14 @@ async fn run_comms(
         {
             let mut storage_lock = storage.lock().await;
             let storage = storage_lock.as_mut().expect("Storage not initialized");
-            measurement = measurement_storage.read(storage, (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
+            measurement = measurement_storage.read(storage, (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32);
         }
         if measurement.is_none() {
-            info!("[comm] No measurement found at location {}, skipping", (sector.get_index() - i) % NUM_MEASUREMENTS as u32);
+            info!("[comm] No measurement found at location {}, skipping", (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32);
             continue;
         }
         let measurement = measurement.unwrap();
-        info!("[comm] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
+        info!("[comm] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
         let packet_measurement = MeasurementPacket::new(
             mean_f32_to_u16(measurement.mean, 20.0),
             std_f32_to_u8(measurement.std, 1.0),

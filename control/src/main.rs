@@ -42,6 +42,8 @@ mod utils;
 mod gnss;
 mod comms;
 mod rockblock;
+mod realtime;
+mod scheduler;
 
 use crate::comms::task_comms;
 use crate::compute::task_compute;

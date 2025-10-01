@@ -4,8 +4,9 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channe
 use heapless::Vec;
 
 use crate::control::{MeasureReqMsg, MeasureResMsg};
+use crate::realtime::Deviation;
 use crate::{utils, StorageType};
-use crate::{gnss::GNSSSensor, storage::{BinStorage, FlashStorage}, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
+use crate::{gnss::GNSSSensor, storage::BinStorage, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
 
 #[embassy_executor::task]
 pub async fn task_measure(
@@ -21,26 +22,35 @@ pub async fn task_measure(
         match message {
             MeasureReqMsg::GetRefTime => {
                 info!("[meas] fetching reference time from GNSS");
-                if let Some((reftime, refdate)) = get_time(&mut gnss_sensor).await {
-                    channel_res.send(MeasureResMsg::RefTimeSuccess{ reftime, refdate }).await;
+                gnss_sensor.wake().await;
+                if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
+                    channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
                 } else {
                     channel_res.send(MeasureResMsg::RefTimeFail).await;
                 }
+                gnss_sensor.sleep().await;
             }
-            MeasureReqMsg::MeasureSector { sector, config } => {
-                info!("[meas] starting measurement for sector {}", sector.get_index());
-                run_measure(&mut gnss_sensor, storage, &sector, &config).await;
-                channel_res.send(MeasureResMsg::SectorSuccess).await;
+            MeasureReqMsg::MeasureSector { sector, config, sleep_gnss } => {
+                info!("[meas] starting measurement for sector {}", sector.get_measurement_index());
+                if !gnss_sensor.is_awake() {
+                    gnss_sensor.wake().await;
+                }
+                let deviation = run_measure(&mut gnss_sensor, storage, &sector, &config).await;
+                if sleep_gnss {
+                    gnss_sensor.sleep().await;
+                }
+                channel_res.send(MeasureResMsg::SectorSuccess { deviation }).await;
             }
         }
     }
     
 }
 
-async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) {
+async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) -> Deviation {
     let bin_storage = BinStorage::new(config.seconds_per_bin);
     let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_index();
+    let deviation: Deviation;
 
     loop {
         let nmeaburst= gnss_sensor.read_burst().await;
@@ -58,6 +68,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         }
 
         if sector.is_time_after_sector(burst.time) {
+            deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
             info!("[meas][{}] time is later than current sector, STOPPING", time_str.as_str());
             break;
         }
@@ -97,9 +108,11 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
     }
     bin_data.clear();
     info!("[meas] wrote last bin {} to storage", last_bin_id);
+
+    deviation
 }
 
-pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(u32, u32)> {
+pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> {
     gnss_sensor.read_burst().await;
     let nmeaburst = gnss_sensor.read_burst().await;
     let burst = gnss_sensor.parser.parse_burst(&nmeaburst, true);
@@ -109,7 +122,8 @@ pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(u32, u32)> {
             info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
             None
         } else {
-            Some((burst.time, date))
+            let deviation: Deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
+            Some((deviation, date))
         }
     } else {
         None

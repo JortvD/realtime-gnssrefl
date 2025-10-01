@@ -1,7 +1,7 @@
 use defmt::info;
 use heapless::{Vec, String};
 
-use crate::utils;
+use crate::{realtime::RealTime, utils};
 
 // NMEA processing
 pub const NMEA_MAX_LINES: usize = 64;
@@ -31,6 +31,8 @@ pub const BURST_SIZE: usize = 64; // Samples per burst
 pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin (4 minutes)
 
 pub const MEASUREMENT_STORAGE_SIZE: usize = BLOCK_SIZE; // 4KB
+
+pub const WARMUP_TIME: u32 = 30;
 
 pub type Sample = u32;
 pub type Burst = Vec<Sample, BURST_SIZE>;
@@ -91,7 +93,8 @@ impl Default for Config {
 
 #[derive(Clone, Debug)]
 pub struct Sector {
-    index: u32,
+    midpoint_index: u32,
+    measurement_index: u32,
     start_bin_index: u32,
     start_time: u32,
     n_bins: u32,
@@ -100,9 +103,10 @@ pub struct Sector {
 }
 
 impl Sector {
-    pub fn new(index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
+    pub fn new(midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
         Self {
-            index,
+            midpoint_index,
+            measurement_index,
             start_bin_index,
             start_time,
             n_bins,
@@ -110,8 +114,12 @@ impl Sector {
         }
     }
 
-    pub fn get_index(&self) -> u32 {
-        self.index
+    pub fn get_midpoint_index(&self) -> u32 {
+        self.midpoint_index
+    }
+
+    pub fn get_measurement_index(&self) -> u32 {
+        self.measurement_index
     }
 
     pub fn get_start_bin_index(&self) -> u32 {
@@ -147,6 +155,10 @@ impl Sector {
 
     pub fn is_time_after_sector(&self, time: u32) -> bool {
         time >= self.get_end_time()
+    }
+
+    pub fn is_directly_following(&self, previous: &Sector) -> bool {
+        RealTime::diff_wrapping(self.start_time, previous.get_end_time()) < 30 // TODO remove magic number
     }
 }
 
