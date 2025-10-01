@@ -49,9 +49,9 @@ fn main() -> Result<()> {
         port.flush()?;
 
         let elapsed = start_time.elapsed();
-        if elapsed < Duration::from_millis(100) {
-            println!("Wrote {} lines to {}, sleeping for {:?}", part.len(), port_path, Duration::from_millis(100) - elapsed);
-            sleep(Duration::from_millis(100) - elapsed);
+        if elapsed < Duration::from_millis(1000) {
+            println!("Wrote {} lines to {}, sleeping for {:?}", part.len(), port_path, Duration::from_millis(1000) - elapsed);
+            sleep(Duration::from_millis(1000) - elapsed);
         }
     }
 

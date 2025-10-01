@@ -4,7 +4,7 @@ use embassy_time::Timer;
 
 use crate::utils;
 
-pub const SPEEDUP_FACTOR: u64 = 10;
+pub const SPEEDUP_FACTOR: u64 = 1;
 const SECONDS_PER_DAY: u32 = 86400;
 
 pub struct RealTime {
@@ -32,16 +32,22 @@ impl RealTime {
         return self.ref_real_date;
     }
 
-    pub fn update(&mut self, deviation: Deviation, date: u32) {
-        let deviation_ms = Instant::now().as_secs() - deviation.measured_at.as_secs();
-        self.ref_real_time = deviation.time + (deviation_ms / 1000) as u32;
+    pub fn update_date(&mut self, date: u32) {
         self.ref_real_date = date;
+        info!(
+            "[cont] updated reference date to {} ({})", 
+            self.ref_real_date, utils::date_to_str(self.ref_real_date).as_str()
+        );
+    }
+
+    pub fn update_time(&mut self, deviation: Deviation) {
+        let deviation_ms = Instant::now().as_millis() - deviation.measured_at.as_millis();
+        self.ref_real_time = deviation.time + (deviation_ms / 1000) as u32;
         self.ref_pico_time = Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR);
         info!(
-            "[cont] updated reference time to {} ({}) and date to {} ({}) (pico at {} ms since startup). Update delay {} ms", 
+            "[cont] updated reference time to {} ({}) (pico at {} ms since startup). Update delay {} ms", 
             self.ref_real_time, 
-            utils::seconds_to_time_str(self.ref_real_time).as_str(), 
-            self.ref_real_date, utils::date_to_str(self.ref_real_date).as_str(), 
+            utils::seconds_to_time_str(self.ref_real_time).as_str(),
             self.ref_pico_time.as_millis(),
             deviation_ms
         );
@@ -73,9 +79,10 @@ impl RealTime {
         let wrapped_diff = SECONDS_PER_DAY - diff;
         diff.min(wrapped_diff)
     }
-
-    pub fn get_timer(sleeptime: u32) -> Timer{
-        Timer::after_millis(sleeptime as u64 * 1000 / SPEEDUP_FACTOR)
+    
+    pub fn get_timer(&self, sleep_until: u32) -> Timer {
+        let now = self.get_real_time();
+        Timer::after_millis(RealTime::subtract_wrapping(sleep_until, now) as u64 * 1000 / SPEEDUP_FACTOR)
     }
 }
 

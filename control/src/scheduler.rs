@@ -1,37 +1,31 @@
 use crate::realtime::*;
-use embassy_time::Timer;
 use crate::types::*;
 use heapless::Vec;
 use defmt::info;
 use crate::utils;
 
-pub struct Scheduler<'a> {
-    realtime: &'a RealTime,
-}
+pub struct Scheduler {}
 
-impl<'a> Scheduler<'a> {
-    pub fn new(realtime: &'a RealTime) -> Self {
-        Self {
-            realtime: realtime,
-        }
+impl Scheduler {
+    pub fn new() -> Self {
+        Self {}
     }
 
-    pub fn get_next_sectortimer(&self, config: &Config, sector: &Sector) -> SectorTimer {
-        let now_time = self.realtime.get_real_time();
-        let now_days = self.realtime.get_days();
+    pub fn get_next_sectortimer(&self, config: &Config, realtime: &RealTime, sector: &Sector) -> SectorTime {
+        let now_time = realtime.get_real_time();
+        let now_days = realtime.get_days();
         let midpoint_index = self.get_next_sector_midpoint_index(&config, &sector);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    pub fn get_first_sectortimer(&self, config: &Config) -> SectorTimer {
-  
-        let now_time = self.realtime.get_real_time();
-        let now_days = self.realtime.get_days();
+    pub fn get_first_sectortimer(&self, config: &Config, realtime: &RealTime) -> SectorTime {
+        let now_time = realtime.get_real_time();
+        let now_days = realtime.get_days();
         let midpoint_index = self.get_first_sector_midpoint_index(config, now_time);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> SectorTimer {
+    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> SectorTime {
         let sectors_per_day = config.sector_mid_times.len() as u32;
         let half_measure_duration = config.get_measure_duration() / 2;
 
@@ -73,17 +67,16 @@ impl<'a> Scheduler<'a> {
 
         // Sleep until start of next sector (could be the next day)
         let start_time_with_warmup = RealTime::subtract_wrapping(start_time, WARMUP_TIME);
-        let sleeptime = RealTime::subtract_wrapping(start_time_with_warmup, now_time);
 
         info!(
-            "[cont] sleeping from {} ({}) for {} s ({}) until next sector starts", 
+            "[cont] sleeping from {} ({}) to {} s ({}) until next sector starts", 
             now_time,
             utils::seconds_to_time_str(now_time).as_str(),
-            sleeptime, 
-            utils::seconds_to_time_str(sleeptime).as_str()
+            start_time_with_warmup, 
+            utils::seconds_to_time_str(start_time_with_warmup).as_str()
         );
 
-        SectorTimer::new(sector, sleeptime)
+        SectorTime::new(sector, start_time_with_warmup)
     }
 
     fn get_next_sector_midpoint_index(&self, config: &Config, sector: &Sector) -> u32{
@@ -107,16 +100,16 @@ impl<'a> Scheduler<'a> {
 
 }
 
-pub struct SectorTimer {
+pub struct SectorTime {
     pub sector: Sector,
-    pub timer: u32,
+    pub sleep_until: u32,
 }
 
-impl SectorTimer {
-    pub fn new(sector: Sector, timer: u32) -> Self {
+impl SectorTime {
+    pub fn new(sector: Sector, sleep_until: u32) -> Self {
         Self {
             sector,
-            timer
+            sleep_until
         }
     }
 }
