@@ -147,7 +147,7 @@ impl MeasurementStorage {
             error!("Measurement location exceeds container size");
             return;
         }
-        info!("Storing measurement at location {}, container {}, offset {}-{}", location, self.get_container_id(), start_offset, end_offset);
+        // info!("Storing measurement at location {}, container {}, offset {}-{}", location, self.get_container_id(), start_offset, end_offset);
         storage.partial_erase(self.get_container_id(), start_offset, end_offset).expect("Failed to erase measurement location");
         storage.write(self.get_container_id(), start_offset as u32, &data).expect("Failed to write measurement");
     }
@@ -158,7 +158,7 @@ impl MeasurementStorage {
             error!("Measurement location exceeds container size");
             return None;
         }
-        info!("Reading measurement at location {}, container {}, offset {}", location, self.get_container_id(), offset);
+        // info!("Reading measurement at location {}, container {}, offset {}", location, self.get_container_id(), offset);
         let mut data = [0u8; MEASUREMENT_SIZE];
         storage.read(self.get_container_id(), offset, &mut data).expect("Failed to read measurement");
 

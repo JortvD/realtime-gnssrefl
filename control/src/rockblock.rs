@@ -19,7 +19,7 @@ impl RockBlock {
     }
 
     pub async fn send_data(&mut self, data: &[u8]) -> Result<(), ()> {
-        info!("SENDING: {} bytes", data.len());
+        info!("[ROCK] SENDING: {} bytes", data.len());
         self.uart.blocking_write(data).expect("Failed to write data");
         Ok(())
     }
@@ -28,7 +28,7 @@ impl RockBlock {
 
         return match self.uart.read(&mut byte).await {
             Ok(_) => {
-                info!("Data received");
+                info!("[ROCK] Data received");
                 match byte[0] {
                     1 => Ok(RockBlockCommand::DMP1),
                     2 => Ok(RockBlockCommand::DMP2),

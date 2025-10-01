@@ -74,8 +74,18 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, 24>::new();
-        mid_times.push(45640 + 120).unwrap();
-        mid_times.push(45640 + 120 + 240 + 10).unwrap();
+        mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("03:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("05:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("19:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("21:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("23:00:00").unwrap()).unwrap();
         Self {
             pre_min_elevation: 10,
             pre_max_elevation: 30,
@@ -83,7 +93,7 @@ impl Default for Config {
             pre_max_azimuth: 150,
             sector_mid_times: mid_times,
 
-            bins_per_sector: 1,
+            bins_per_sector: 15,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
@@ -91,8 +101,22 @@ impl Default for Config {
     }
 }
 
+# [derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectorState {
+    AWAITING,
+    TO_MEASURE,
+    MEASURING,
+    TO_COMPUTE,
+    COMPUTING,
+    TO_COMMUNICATE,
+    COMMUNICATING,
+    DONE
+}
+
 #[derive(Clone, Debug)]
 pub struct Sector {
+    uid: u32,
+
     midpoint_index: u32,
     measurement_index: u32,
     start_bin_index: u32,
@@ -100,18 +124,24 @@ pub struct Sector {
     n_bins: u32,
 
     seconds_per_bin: u32,
+    pub state: SectorState,
 }
 
 impl Sector {
-    pub fn new(midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
+    pub fn new(uid: u32, midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32, state: SectorState) -> Self {
         Self {
+            uid,
             midpoint_index,
             measurement_index,
             start_bin_index,
             start_time,
             n_bins,
             seconds_per_bin,
+            state,
         }
+    }
+    pub fn get_uid(&self) -> u32 {
+        self.uid
     }
 
     pub fn get_midpoint_index(&self) -> u32 {
@@ -157,7 +187,7 @@ impl Sector {
         time >= self.get_end_time()
     }
 
-    pub fn is_directly_following(&self, previous: &Sector) -> bool {
+    pub fn is_succeeding(&self, previous: &Sector) -> bool {
         RealTime::diff_wrapping(self.start_time, previous.get_end_time()) < 30 // TODO remove magic number
     }
 }
@@ -197,7 +227,7 @@ impl Measurement {
         let num_seen = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let mean = f32::from_le_bytes([data[12], data[13], data[14], data[15]]);
         let std = f32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-        info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
+        // info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
         let mut observations = Vec::<Observation, MAX_MEASUREMENT_OBSERVATIONS>::new();
 
         for i in 0..MAX_MEASUREMENT_OBSERVATIONS {
@@ -230,7 +260,7 @@ impl Measurement {
         data[8..12].copy_from_slice(&self.num_seen.to_le_bytes());
         data[12..16].copy_from_slice(&self.mean.to_le_bytes());
         data[16..20].copy_from_slice(&self.std.to_le_bytes());
-        info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
+        // info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
 
         for (i, obs) in self.observations.iter().enumerate() {
             let obs_bytes = obs.to_bytes();

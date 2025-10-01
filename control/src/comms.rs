@@ -5,7 +5,7 @@ use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg, MAX_SECTORS}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket { // 5 bytes
     relative_height_mean: u16,
@@ -86,10 +86,13 @@ pub async fn task_comms(
             rockblock.receive()
         ).await;
         match select {
-            Either::First(CommReqMsg::Send { sector, config }) => {
+            Either::First(CommReqMsg::Send { sectors, config }) => {
+                let sector = sectors.get(0).expect("At least one sector should be present");
                 info!("[comm] starting communication for sector {}", sector.get_measurement_index());
                 run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
-                channel_res.send(CommResMsg::Success).await;
+                let mut uids = Vec::<u32, MAX_SECTORS>::new();
+                uids.push(sector.get_uid()).ok();
+                channel_res.send(CommResMsg::Success { sector_uids: uids }).await;
             }
             Either::Second(command) => {
                 info!("[comm] rockblock command received");
@@ -121,7 +124,7 @@ async fn dump_bin_storage(rockblock: &mut RockBlock, storage: &'static StorageTy
 async fn run_comms(
     rockblock: &mut RockBlock,
     storage: &'static StorageType,
-    sector: Sector,
+    sector: &Sector,
     num_measurements: u32,
 ) {
     let mut packet = Packet::new(

@@ -4,7 +4,7 @@ use embassy_time::Timer;
 
 use crate::utils;
 
-pub const SPEEDUP_FACTOR: u64 = 1;
+pub const SPEEDUP_FACTOR: u64 = 10;
 const SECONDS_PER_DAY: u32 = 86400;
 
 pub struct RealTime {
@@ -33,22 +33,26 @@ impl RealTime {
     }
 
     pub fn update_date(&mut self, date: u32) {
-        self.ref_real_date = date;
         info!(
-            "[cont] updated reference date to {} ({})", 
-            self.ref_real_date, utils::date_to_str(self.ref_real_date).as_str()
+            "[time] updated reference date from {} to ({}) to {} ({})", 
+            self.ref_real_date, utils::date_to_str(self.ref_real_date).as_str(),
+            date, utils::date_to_str(date).as_str()
         );
+        self.ref_real_date = date;
     }
 
     pub fn update_time(&mut self, deviation: Deviation) {
+        let old_time = self.ref_real_time;
         let deviation_ms = Instant::now().as_millis() - deviation.measured_at.as_millis();
         self.ref_real_time = deviation.time + (deviation_ms / 1000) as u32;
         self.ref_pico_time = Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR);
         info!(
-            "[cont] updated reference time to {} ({}) (pico at {} ms since startup). Update delay {} ms", 
+            "[time] updated reference time from {} to ({}) to {} ({}) (pico at {} s since startup). Update delay {} ms", 
+            old_time,
+            utils::seconds_to_time_str(old_time).as_str(),
             self.ref_real_time, 
             utils::seconds_to_time_str(self.ref_real_time).as_str(),
-            self.ref_pico_time.as_millis(),
+            self.ref_pico_time.as_secs(),
             deviation_ms
         );
     }

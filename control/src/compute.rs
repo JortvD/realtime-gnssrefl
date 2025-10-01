@@ -103,15 +103,15 @@ pub async fn task_compute(
         match message {
             ComputeReqMsg::Compute { sector, config } => {
                 info!("[comp] starting computation for sector {}", sector.get_measurement_index());
-                run_compute(sector, storage, config).await;
-                channel_res.send(ComputeResMsg::Success).await;
+                run_compute(&sector, storage, config).await;
+                channel_res.send(ComputeResMsg::Success { sector_uid: sector.get_uid() }).await;
             }
         }
     }
 }
 
 async fn run_compute(
-    sector: Sector, 
+    sector: &Sector, 
     storage: &'static StorageType,
     config: Config,
 ) {

@@ -39,7 +39,7 @@ pub async fn task_measure(
                 if sleep_gnss {
                     gnss_sensor.sleep().await;
                 }
-                channel_res.send(MeasureResMsg::SectorSuccess { deviation }).await;
+                channel_res.send(MeasureResMsg::SectorSuccess { sector_uid: sector.get_uid(), deviation }).await;
             }
         }
     }

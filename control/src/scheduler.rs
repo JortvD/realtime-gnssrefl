@@ -11,21 +11,21 @@ impl Scheduler {
         Self {}
     }
 
-    pub fn get_next_sectortimer(&self, config: &Config, realtime: &RealTime, sector: &Sector) -> SectorTime {
+    pub fn get_next_sector(&self, config: &Config, realtime: &RealTime, sector: &Sector) -> (Sector, u32) {
         let now_time = realtime.get_real_time();
         let now_days = realtime.get_days();
         let midpoint_index = self.get_next_sector_midpoint_index(&config, &sector);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    pub fn get_first_sectortimer(&self, config: &Config, realtime: &RealTime) -> SectorTime {
+    pub fn get_first_sector(&self, config: &Config, realtime: &RealTime) -> (Sector, u32) {
         let now_time = realtime.get_real_time();
         let now_days = realtime.get_days();
         let midpoint_index = self.get_first_sector_midpoint_index(config, now_time);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> SectorTime {
+    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> (Sector, u32) {
         let sectors_per_day = config.sector_mid_times.len() as u32;
         let half_measure_duration = config.get_measure_duration() / 2;
 
@@ -35,9 +35,11 @@ impl Scheduler {
         let is_next_day = start_time <= now_time;
         let sector_day = if is_next_day { now_days + 1 } else { now_days };
 
+        // Compute uid
+        let uid = sector_day * sectors_per_day + midpoint_index;
+
         // Compute measurement index
-        let measurement_index = (sector_day * sectors_per_day
-            + midpoint_index as u32) % NUM_MEASUREMENTS as u32;
+        let measurement_index = uid % NUM_MEASUREMENTS as u32;
 
         // Compute bin range
         let start_bin_index = (sector_day * sectors_per_day as u32
@@ -47,12 +49,14 @@ impl Scheduler {
 
         // Create Sector
         let sector = Sector::new(
+            uid,
             midpoint_index,
             measurement_index as u32,
             start_bin_index,
             start_time,
             n_bins,
             config.seconds_per_bin,
+            SectorState::AWAITING
         );
 
         info!(
@@ -76,7 +80,7 @@ impl Scheduler {
             utils::seconds_to_time_str(start_time_with_warmup).as_str()
         );
 
-        SectorTime::new(sector, start_time_with_warmup)
+        (sector, start_time_with_warmup)
     }
 
     fn get_next_sector_midpoint_index(&self, config: &Config, sector: &Sector) -> u32{
@@ -98,18 +102,4 @@ impl Scheduler {
         midpoint_index as u32
     }
 
-}
-
-pub struct SectorTime {
-    pub sector: Sector,
-    pub sleep_until: u32,
-}
-
-impl SectorTime {
-    pub fn new(sector: Sector, sleep_until: u32) -> Self {
-        Self {
-            sector,
-            sleep_until
-        }
-    }
 }

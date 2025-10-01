@@ -1,6 +1,20 @@
 use heapless::String;
 use core::fmt::Write;
 
+pub fn time_str_to_seconds(time_str: &str) -> Option<u32> {
+    let parts: heapless::Vec<&str, 3> = time_str.split(':').collect::<heapless::Vec<_, 3>>();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let hours = parts[0].parse::<u32>().ok()?;
+    let minutes = parts[1].parse::<u32>().ok()?;
+    let seconds = parts[2].parse::<u32>().ok()?;
+
+    Some(hours * 3600 + minutes * 60 + seconds)
+}
+
+
 pub fn seconds_to_time_str(seconds: u32) -> String<8> {
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;

@@ -41,7 +41,7 @@ impl GNSSSensor {
                     start = Instant::now();
                 }
 
-                line.push(read_byte[0] as char).expect("line buffer overflow");
+                line.push(read_byte[0] as char).ok();
 
                 match read_byte[0] {
                     b'\n' => {
