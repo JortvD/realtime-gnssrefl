@@ -6,6 +6,7 @@ use embassy_time::{Instant, Timer};
 use crate::realtime::{Deviation, RealTime};
 use crate::types::{self, Config, Sector, NUM_MEASUREMENTS};
 use crate::{utils, NUM_BINS};
+use crate::scheduler::*;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 use heapless::Deque;
@@ -31,15 +32,19 @@ pub async fn task_control(
         config.sector_mid_times.len()
     );
     let mut realtime = RealTime::new();
+    let mut scheduler = Scheduler::new(&realtime);
 
     // List of tasks
     let mut realtime_available = false;
-    let mut sector: Deque<Sector, 1> = Deque::new();
+    // let mut sector: Deque<Sector, 1> = Deque::new();
     let mut list_measured: Deque<Sector, 8> = Deque::new();
     let mut list_computed: Deque<Sector, 8> = Deque::new();
 
-    let mut next_sector: Deque<Sector, 1> = Deque::new();
-    let mut next_timer_future = Timer::after_secs(u32::max_value() as u64);
+    let mut sector: Deque<Sector, 1> = Deque::new();
+    let mut sectortimer: Option<SectorTimer>;
+
+    // let mut next_sector: Deque<Sector, 1> = Deque::new();
+    // let mut next_timer_future = Timer::after_secs(u32::max_value() as u64);
 
     let mut core0busy = false;
     let mut core1busy = false;
@@ -55,13 +60,15 @@ pub async fn task_control(
                 measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
                 core0busy = true;
             } else
-            if let Some(sector) = sector.front() {
+            if let Some(sector) = sector.pop_front() {
                 info!("[cont] requesting measurement for sector {}", sector.get_measurement_index());
-                let sleep_gnss = if let Some(ns) = next_sector.front() {
-                    ns.is_directly_following(sector)
+
+                let sleep_gnss = if let Some(sectortimer) = sectortimer {
+                    sectortimer.sector.is_directly_following(&sector)
                 } else {
                     false
                 };
+
                 measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: sector.clone(), config: config.clone(), sleep_gnss }).await;
                 core0busy = true;
             }
@@ -83,21 +90,25 @@ pub async fn task_control(
 
         // Wait for responses
         info!("[cont] waiting for events");
+
+        let mut timer = if let Some(st) = sectortimer {
+            RealTime::get_timer(st.timer)
+        } else {
+            Timer::after_secs(u64::MAX)
+        };
+
         let result = select4(
-            &mut next_timer_future,
+            &mut timer,
             measure_response_channel.receive(),
             compute_response_channel.receive(),
             comm_response_channel.receive(),
         ).await;
         match result {
             Either4::First(_) => {
-                next_timer_future = Timer::after_secs(u32::max_value() as u64);
                 info!("[cont] next sector timer expired, getting next sector");
-                sector.push_back(next_sector.pop_front().unwrap()).unwrap();
-                // 5 sec before next_sector
-                let (ns, ntf) = next_sector_timer(&config, &realtime, SECTOR_MARGIN);
-                next_sector.push_front(ns).unwrap();
-                next_timer_future = ntf;
+                let finished_sector = sector.pop_front().unwrap();
+                sectortimer = Some(scheduler.get_next_sectortimer(&config, &finished_sector));
+                sector.push_back(finished_sector).unwrap();
             }
             Either4::Second(measure_res_msg) => {
                 match measure_res_msg {
@@ -105,9 +116,7 @@ pub async fn task_control(
                         info!("[cont] received reference time from GNSS");
                         realtime.update(deviation, date);
                         realtime_available = true;
-                        let (ns, ntf) = next_sector_timer(&config, &realtime, 0);
-                        next_sector.push_front(ns).unwrap();
-                        next_timer_future = ntf;
+                        sectortimer = Some(scheduler.get_first_sectortimer(&config));
                         core0busy = false;
                     },
                     MeasureResMsg::RefTimeFail {} => {
