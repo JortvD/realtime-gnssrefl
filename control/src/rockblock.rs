@@ -1,7 +1,6 @@
 use defmt::info;
 
 use embassy_rp::uart;
-use heapless::String;
 
 pub enum RockBlockCommand {
     ERRR = 0,

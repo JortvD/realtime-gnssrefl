@@ -7,7 +7,7 @@ use crate::realtime::{Deviation, RealTime};
 use crate::types::{self, Config, Sector};
 use crate::scheduler::*;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use heapless::{Deque, Vec};
+use heapless::Vec;
 use embassy_futures::select::{select4, Either4};
 
 pub const MAX_SECTORS: usize = 128;

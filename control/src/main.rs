@@ -7,26 +7,18 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
 use embassy_rp::uart;
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Instant, Timer};
-use embassy_rp::uart::{Uart, Config};
+use embassy_time::Timer;
 use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
 use embassy_rp::peripherals::UART0;
 use embassy_rp::peripherals::UART1;
-use embassy_rp::multicore::Stack;
-use static_cell::StaticCell;
-use embassy_rp::multicore::spawn_core1;
-use embassy_executor::Executor;
 use embassy_sync::channel::Channel;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use heapless::Vec;
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -53,11 +45,7 @@ use crate::gnss::GNSSSensor;
 use crate::measure::task_measure;
 use crate::rockblock::RockBlock;
 use crate::storage::FlashStorage;
-use crate::types::*;
 
-
-static mut CORE1_STACK: Stack<4096> = Stack::new();
-static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static MEASURE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, MeasureReqMsg, 8> = Channel::new();
 static COMPUTE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, ComputeReqMsg, 8> = Channel::new();
 static COMM_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, CommReqMsg, 8> = Channel::new();
@@ -76,9 +64,9 @@ bind_interrupts!(pub struct Irqs {
 #[unsafe(link_section = ".bi_entries")]
 #[used]
 pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
-    embassy_rp::binary_info::rp_program_name!(c"Blinky Example"),
+    embassy_rp::binary_info::rp_program_name!(c"GNSS_IR_Control"),
     embassy_rp::binary_info::rp_program_description!(
-        c"This example tests the RP Pico on board LED, connected to gpio 25"
+        c"This code for a PI Pico 2 controls the GNSS_IR sensor made by team Tahmo! "
     ),
     embassy_rp::binary_info::rp_cargo_version!(),
     embassy_rp::binary_info::rp_program_build_attribute!(),
@@ -91,12 +79,8 @@ static STORAGE: StorageType = Mutex::new(None);
 async fn main(spawner: Spawner) {
     info!("[main] startup");
     // Init peripherals
-    let mut config: embassy_rp::config::Config = Default::default();
-    config.clocks = ClockConfig::system_freq(150_000_000).unwrap();
+    let config= Default::default();
     let p = embassy_rp::init(config);
-
-    let sys_freq = clk_sys_freq();
-    info!("[main] using system clock: {} MHz", sys_freq / 1_000_000);
     
     // GPIOS
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
@@ -118,8 +102,6 @@ async fn main(spawner: Spawner) {
     {
         *(STORAGE.lock().await) = Some(storage);
     }
-
-    //let sector = Sector::new(0, 0, 45602, config.bins_per_sector, config.seconds_per_bin);
 
     info!("[main] initialized peripherals");
 
@@ -156,20 +138,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(led_blink(led)).unwrap();
     
     info!("[main] spawned core 0 tasks");
-
-    // Spawn core 1 tasks
-    // spawn_core1(
-    //     p.CORE1,
-    //     unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
-    //     move || {
-    //         let executor1 = EXECUTOR1.init(Executor::new());
-    //         executor1.run(|spawner| {
-                
-    //         });
-    //     },
-    // );
-
-    // info!("Spawned core 1 tasks");
 }
 
 
@@ -183,27 +151,6 @@ async fn led_blink(mut led: Output<'static>) {
         Timer::after_millis(25).await;
     }
 }
-
-// #[embassy_executor::task]
-// async fn task0() {
-//     loop {
-//         info!("Task0");
-//         Timer::after_millis(1000).await;
-//     }
-// }
-
-// #[embassy_executor::task]
-// async fn task1() {
-//     loop {
-//         info!("Task1");
-//         Timer::after_millis(1000).await;
-//                 let x = 1;
-//         let y = 0;
-//         let _ = x / y; // division by zero triggers a crash
-//         //defmt::panic!("Task1 panic");
-//     }
-// }
-
 
 
 

@@ -204,8 +204,6 @@ pub fn lombscargle_no_std<const CAP: usize>(
 
 use core::cmp::min;
 
-use defmt::info;
-
 /// Solve A x = b in-place via Gaussian elimination with partial pivoting (no_std, f32).
 /// - `a` is an NxN matrix (only top-left n×n is used)
 /// - `b` is length N (only first n used)
