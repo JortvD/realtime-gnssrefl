@@ -37,6 +37,7 @@ mod rockblock;
 mod realtime;
 mod scheduler;
 
+use crate::clock::clk_control;
 use crate::comms::task_comms;
 use crate::compute::task_compute;
 use crate::control::task_control;
@@ -52,6 +53,8 @@ static COMM_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, CommReqMsg, 8> = C
 static MEASURE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MeasureResMsg, 8> = Channel::new();
 static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg, 8> = Channel::new();
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
+
+pub const UART_BAUDRATE: u32 = 115_200; //921_600
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
@@ -79,7 +82,8 @@ static STORAGE: StorageType = Mutex::new(None);
 async fn main(spawner: Spawner) {
     info!("[main] startup");
     // Init peripherals
-    let config= Default::default();
+    let mut config: embassy_rp::config::Config = Default::default();
+    config.clocks = ClockConfig::system_freq(150_000_000).unwrap();
     let p = embassy_rp::init(config);
     
     // GPIOS
@@ -87,13 +91,13 @@ async fn main(spawner: Spawner) {
 
     // UART GNSS
     let mut gnss_uart_config = uart::Config::default();
-    gnss_uart_config.baudrate = 921_600;
+    gnss_uart_config.baudrate = UART_BAUDRATE;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_12, p.PIN_13, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
     let gnss_sensor = GNSSSensor::new(gnss_uart, types::Config::default());
 
     // UART Rockblock
     let mut config_uart_rockblock = uart::Config::default();
-    config_uart_rockblock.baudrate = 921_600;
+    config_uart_rockblock.baudrate = UART_BAUDRATE;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let rockblock = RockBlock::new(uart_rockblock);
 
@@ -134,6 +138,8 @@ async fn main(spawner: Spawner) {
         &COMPUTE_RESPONSE_CHANNEL,
         &COMM_RESPONSE_CHANNEL, 
     )).unwrap();
+
+    spawner.spawn(clk_control()).unwrap();
 
     spawner.spawn(led_blink(led)).unwrap();
     
