@@ -1,11 +1,11 @@
 
 use defmt::info;
 use embassy_futures::select::{select, Either};
-use embassy_time::Instant;
+use embassy_time::{Instant, Timer};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg, MAX_SECTORS}, rockblock::{RockBlock, RockBlockCommand}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
+use crate::{ control::{CommReqMsg, CommResMsg, MAX_SECTORS}, rockblock::{IMTMessage, RockBlock9704, BODY_SIZE, IMT_DEFAULT_TOPIC}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
 
 pub struct MeasurementPacket { // 5 bytes
     relative_height_mean: u16,
@@ -77,13 +77,13 @@ pub async fn task_comms(
     channel_req: &'static Channel<CriticalSectionRawMutex, CommReqMsg, 8>,
     channel_res: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
     storage: &'static StorageType,
-    mut rockblock: RockBlock,
+    mut rockblock: RockBlock9704,
 ) {
     loop {
         info!("[comm] waiting for request");
         let select = select(
             channel_req.receive(), 
-            rockblock.receive()
+            Timer::after_secs(u64::MAX)
         ).await;
         match select {
             Either::First(CommReqMsg::Send { sectors, config }) => {
@@ -96,37 +96,56 @@ pub async fn task_comms(
             }
             Either::Second(command) => {
                 info!("[comm] rockblock command received");
-                match command.ok().expect("msg") {
-                    RockBlockCommand::DMP1 => dump_bin_storage(&mut rockblock, storage).await,
-                    _ => {},
-                }
+                // match command.ok().expect("msg") {
+                //     RockBlockCommand::DMP1 => dump_bin_storage(&mut rockblock, storage).await,
+                //     _ => {},
+                // }
             }
         }
     }
 }
 
-async fn dump_bin_storage(rockblock: &mut RockBlock, storage: &'static StorageType) {
-    {
-        let mut storage_lock = storage.lock().await;
-            let storage = storage_lock.as_mut().expect("Storage not initialized");
-        for bin in 0..NUM_BINS {
-            for block in 0..NUM_CONTAINER_BLOCKS {
-                let mut io_buf = [0u8; BLOCK_SIZE];
+async fn dump_bin_storage(rockblock: &mut RockBlock9704, storage: &'static StorageType) {
+    let mut storage_lock = storage.lock().await;
+    let storage = storage_lock.as_mut().expect("Storage not initialized");
 
-                storage.read(bin, (block * BLOCK_SIZE) as u32, &mut io_buf).expect("");
+    for bin in 0..NUM_BINS {
+        for block in 0..NUM_CONTAINER_BLOCKS {
+            let mut io_buf = [0u8; 256];
 
-                rockblock.send_data(&io_buf).await.expect("");
-            }
+            storage.read(bin, (block * BLOCK_SIZE) as u32, &mut io_buf).expect("");
+
+            // let message = IMTMessage::new(
+            //     IMT_DEFAULT_TOPIC,
+            //     io_buf,
+            //     BLOCK_SIZE as u8,
+            // );
+
+            // rockblock.send_message(message).await;
         }
     }
 }
 
 async fn run_comms(
-    rockblock: &mut RockBlock,
+    rockblock: &mut RockBlock9704,
     storage: &'static StorageType,
     sector: &Sector,
     num_measurements: u32,
 ) {
+    info!("[comm] Turning on RockBlock");
+    rockblock.power_on().await;
+    if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
+        info!("[comm] RockBlock not ready to be checked, aborting comms");
+        return;
+    }
+    info!("[comm] Checking RockBlock status");
+    rockblock.check_status().await;
+    if rockblock.status != crate::rockblock::RockBlock9704Status::Ready {
+        info!("[comm] RockBlock not ready, aborting comms");
+        return;
+    }
+    info!("[comm] RockBlock ready, preparing packet");
+
     let mut packet = Packet::new(
         1,
         0,
@@ -162,8 +181,22 @@ async fn run_comms(
     info!("[comm] Sending packet with {} measurements, total size {} bytes", packet.measurements.len(), data.len());
     
     let start = Instant::now();
-    rockblock.send_data(&data).await.expect("Failed to send data");
+    let mut body = [0u8; BODY_SIZE];
+    let data_slice = data.as_slice();
+    let len = data_slice.len().min(BODY_SIZE);
+    body[..len].copy_from_slice(&data_slice[..len]);
+    let message = IMTMessage::new(
+        IMT_DEFAULT_TOPIC,
+        body,
+        len as u8,
+    );
+
+    rockblock.send_message(message).await;
     info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
+
+    info!("[comm] Turning off RockBlock");
+    rockblock.power_off().await;
+    info!("[comm] RockBlock powered off");
 }
 
 fn mean_f32_to_u16(value: f32, max: f32) -> u16 {

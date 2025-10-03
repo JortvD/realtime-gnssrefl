@@ -51,7 +51,7 @@ use crate::control::task_control;
 use crate::control::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
 use crate::gnss::GNSSSensor;
 use crate::measure::task_measure;
-use crate::rockblock::RockBlock;
+use crate::rockblock::RockBlock9704;
 use crate::storage::FlashStorage;
 use crate::types::*;
 
@@ -111,7 +111,15 @@ async fn main(spawner: Spawner) {
     let mut config_uart_rockblock = uart::Config::default();
     config_uart_rockblock.baudrate = 921_600;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
-    let rockblock = RockBlock::new(uart_rockblock);
+    let pin_power_enable = Output::new(p.PIN_10, Level::Low);
+    let pin_iridium_enable = Output::new(p.PIN_11, Level::Low);
+    let pin_iridium_status = gpio::Input::new(p.PIN_14, gpio::Pull::Up);
+    let rockblock = RockBlock9704::new(
+        uart_rockblock,
+        pin_power_enable,
+        pin_iridium_enable,
+        pin_iridium_status
+    );
 
     let storage = FlashStorage::new(p.FLASH, false);
 
