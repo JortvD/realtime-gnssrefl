@@ -30,6 +30,9 @@ pub enum JSPRTarget {
     MessageOriginate,
     MessageOriginateSegment,
     MessageOriginateStatus,
+    MessageTerminate,
+    MessageTerminateSegment,
+    MessageTerminateStatus,
     ConstellationState,
 }
 
@@ -45,6 +48,9 @@ impl JSPRTarget {
             JSPRTarget::MessageOriginate => "messageOriginate",
             JSPRTarget::MessageOriginateSegment => "messageOriginateSegment",
             JSPRTarget::MessageOriginateStatus => "messageOriginateStatus",
+            JSPRTarget::MessageTerminate => "messageTerminate",
+            JSPRTarget::MessageTerminateSegment => "messageTerminateSegment",
+            JSPRTarget::MessageTerminateStatus => "messageTerminateStatus",
             JSPRTarget::ConstellationState => "constellationState",
         }
     }
@@ -60,6 +66,9 @@ impl JSPRTarget {
             "messageOriginate" => Some(JSPRTarget::MessageOriginate),
             "messageOriginateSegment" => Some(JSPRTarget::MessageOriginateSegment),
             "messageOriginateStatus" => Some(JSPRTarget::MessageOriginateStatus),
+            "messageTerminate" => Some(JSPRTarget::MessageTerminate),
+            "messageTerminateSegment" => Some(JSPRTarget::MessageTerminateSegment),
+            "messageTerminateStatus" => Some(JSPRTarget::MessageTerminateStatus),
             "constellationState" => Some(JSPRTarget::ConstellationState),
             _ => None,
         }
@@ -213,7 +222,30 @@ pub struct JSPRPutMessageOriginateSegment {
 pub struct JSPRPutMessageOriginateStatus {
     topic_id: u16,
     message_id: u8,
-    status: String<32>,
+    final_mo_status: String<32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JSPRUnsMessageTerminateSegment {
+    topic_id: u16,
+    message_id: u8,
+    segment_start: u16,
+    segment_length: u32,
+    data: String<512>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JSPRUnsMessageTerminate {
+    topic_id: u16,
+    message_id: u8,
+    message_length_max: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JSPRUnsMessageTerminateStatus {
+    topic_id: u16,
+    message_id: u8,
+    final_mt_status: String<32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,7 +279,9 @@ pub enum RockBlockError {
 const REQUEST_SIZE: usize = 256;
 const RESPONSE_SIZE: usize = 256;
 pub const BODY_SIZE: usize = 256;
+pub const MAX_RESPONSE_SIZE: usize = 256;
 const MAX_SEND_ITERATIONS: usize = 100;
+const MAX_RECEIVE_ITERATIONS: usize = 100;
 const MAX_POWER_ON_ITERATIONS: usize = 100;
 
 pub const IMT_DEFAULT_TOPIC: u16 = 244;
@@ -357,9 +391,9 @@ impl RockBlock9704 {
             match target {
                 JSPRTarget::MessageOriginateStatus => {
                     let (status_response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateStatus>(&buffer[..length as usize]).expect("Failed to parse MessageOriginateStatus response");
-                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.status.as_str());
+                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mo_status.as_str());
 
-                    if status_response.status.as_str() != "mo_ack_received" {
+                    if status_response.final_mo_status.as_str() != "mo_ack_received" {
                         self.status = RockBlock9704Status::Error;
                         return None;
                     }
@@ -399,6 +433,66 @@ impl RockBlock9704 {
 
         self.status = RockBlock9704Status::Ready;
         Some(())
+    }
+
+    pub async fn receive_message(&mut self, buffer: &mut [u8; MAX_RESPONSE_SIZE]) -> Option<u16> {
+        self.status = RockBlock9704Status::Receiving;
+        let mut x = 0;
+        let mut i = 0;
+
+        loop {
+            let mut buf = [0u8; RESPONSE_SIZE];
+            let (code, target, length) = self.receive_jspr(&mut buf).await.expect("Failed to receive JSPR response");
+
+            if code != JSPRResultCode::UnsolicitedMessage {
+                info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str());
+                self.status = RockBlock9704Status::Error;
+                return None;
+            }
+
+            match target {
+                JSPRTarget::MessageTerminate => {
+                    let (terminate_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminate>(&buf[..length as usize]).expect("Failed to parse MessageTerminate response");
+                    info!("[ROCK][{:02}] Message Terminate: Topic ID: {}, Message ID: {}, Max Length: {}", i, terminate_response.topic_id, terminate_response.message_id, terminate_response.message_length_max);
+                },
+                JSPRTarget::MessageTerminateSegment => {
+                    let (segment_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminateSegment>(&buf[..length as usize]).expect("Failed to parse MessageTerminateSegment response");
+                    info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length);
+                    let mut temp = [0u8; BODY_SIZE*2];
+                    let decoded_length = STANDARD.decode_slice(&segment_response.data.as_bytes(), &mut temp).ok()?;
+                    buffer[x..x+decoded_length].copy_from_slice(&temp[..decoded_length]);
+                    x += decoded_length;
+
+                    info!("[ROCK][{:02}] Received {} bytes, total {}", i, decoded_length, x);
+                },
+                JSPRTarget::MessageTerminateStatus => {
+                    let (status_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminateStatus>(&buf[..length as usize]).expect("Failed to parse MessageTerminateStatus response");
+                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mt_status.as_str());
+                    if status_response.final_mt_status.as_str() != "complete" {
+                        self.status = RockBlock9704Status::Error;
+                        return None;
+                    }
+                    break;
+                },
+                JSPRTarget::ConstellationState => {
+                    let (constellation_response, _) = serde_json_core::from_slice::<JSPRGetConstellationState>(&buf[..length as usize]).expect("Failed to parse ConstellationState response");
+                    info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_bars);
+                },
+                _ => {
+                    info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str());
+                }
+            }
+
+            i += 1;
+
+            if i > MAX_RECEIVE_ITERATIONS {
+                info!("[ROCK] Max iterations reached while receiving message");
+                self.status = RockBlock9704Status::Error;
+                return None;
+            }
+        }
+        self.status = RockBlock9704Status::Ready;
+        Some(x as u16)
     }
 
     pub async fn power_on(&mut self) {
