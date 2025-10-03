@@ -1,7 +1,8 @@
-use defmt::{info, Str};
+use defmt::info;
 
 use embassy_rp::{gpio, uart};
-use heapless::{format, String};
+use embassy_time::Timer;
+use heapless::{format, String, Vec};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 pub enum JSPRMethod {
@@ -18,6 +19,7 @@ impl JSPRMethod {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum JSPRTarget {
     ApiVersion,
     SimInterface,
@@ -64,9 +66,32 @@ impl JSPRTarget {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum JSPRResultCode {
     Ok = 200,
     UnsolicitedMessage = 299,
+    VersionNotSelected = 400,
+    UnsupportedRequestType = 401,
+    ConfigurationAlreadySet = 402,
+    CommandTooLong = 403,
+    UnknownTarget = 404,
+    CommandMalformed = 405,
+    OperationNotAllowed = 406,
+    BadJson = 407,
+    RequestFailed = 408,
+    Unauthorized = 409,
+    SimNotConfigured = 410,
+    WakeXcvrInInvalid = 411,
+    InvalidChannel = 412,
+    InvalidAction = 413,
+    HardwareNotConfigured = 414,
+    InvalidRadioPath = 415,
+    CrashDumpNotAvailable = 416,
+    FeatureNotSupportedByHardware = 417,
+    NotProvisioned = 418,
+    InvalidTransmitPower = 419,
+    InvalidBurstType = 420,
+    SerialPortError = 500,
 }
 
 impl JSPRResultCode {
@@ -74,7 +99,58 @@ impl JSPRResultCode {
         match code {
             200 => Some(JSPRResultCode::Ok),
             299 => Some(JSPRResultCode::UnsolicitedMessage),
+            400 => Some(JSPRResultCode::VersionNotSelected),
+            401 => Some(JSPRResultCode::UnsupportedRequestType),
+            402 => Some(JSPRResultCode::ConfigurationAlreadySet),
+            403 => Some(JSPRResultCode::CommandTooLong),
+            404 => Some(JSPRResultCode::UnknownTarget),
+            405 => Some(JSPRResultCode::CommandMalformed),
+            406 => Some(JSPRResultCode::OperationNotAllowed),
+            407 => Some(JSPRResultCode::BadJson),
+            408 => Some(JSPRResultCode::RequestFailed),
+            409 => Some(JSPRResultCode::Unauthorized),
+            410 => Some(JSPRResultCode::SimNotConfigured),
+            411 => Some(JSPRResultCode::WakeXcvrInInvalid),
+            412 => Some(JSPRResultCode::InvalidChannel),
+            413 => Some(JSPRResultCode::InvalidAction),
+            414 => Some(JSPRResultCode::HardwareNotConfigured),
+            415 => Some(JSPRResultCode::InvalidRadioPath),
+            416 => Some(JSPRResultCode::CrashDumpNotAvailable),
+            417 => Some(JSPRResultCode::FeatureNotSupportedByHardware),
+            418 => Some(JSPRResultCode::NotProvisioned),
+            419 => Some(JSPRResultCode::InvalidTransmitPower),
+            420 => Some(JSPRResultCode::InvalidBurstType),
+            500 => Some(JSPRResultCode::SerialPortError),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JSPRResultCode::Ok => "200 OK",
+            JSPRResultCode::UnsolicitedMessage => "299 Unsolicited Message",
+            JSPRResultCode::VersionNotSelected => "400 Version Not Selected",
+            JSPRResultCode::UnsupportedRequestType => "401 Unsupported Request Type",
+            JSPRResultCode::ConfigurationAlreadySet => "402 Configuration Already Set",
+            JSPRResultCode::CommandTooLong => "403 Command Too Long",
+            JSPRResultCode::UnknownTarget => "404 Unknown Target",
+            JSPRResultCode::CommandMalformed => "405 Command Malformed",
+            JSPRResultCode::OperationNotAllowed => "406 Operation Not Allowed",
+            JSPRResultCode::BadJson => "407 Bad JSON",
+            JSPRResultCode::RequestFailed => "408 Request Failed",
+            JSPRResultCode::Unauthorized => "409 Unauthorized",
+            JSPRResultCode::SimNotConfigured => "410 SIM Not Configured",
+            JSPRResultCode::WakeXcvrInInvalid => "411 Wake Xcvr Invalid",
+            JSPRResultCode::InvalidChannel => "412 Invalid Channel",
+            JSPRResultCode::InvalidAction => "413 Invalid Action",
+            JSPRResultCode::HardwareNotConfigured => "414 Hardware Not Configured",
+            JSPRResultCode::InvalidRadioPath => "415 Invalid Radio Path",
+            JSPRResultCode::CrashDumpNotAvailable => "416 Crash Dump Not Available",
+            JSPRResultCode::FeatureNotSupportedByHardware => "417 Feature Not Supported By Hardware",
+            JSPRResultCode::NotProvisioned => "418 Not Provisioned",
+            JSPRResultCode::InvalidTransmitPower => "419 Invalid Transmit Power",
+            JSPRResultCode::InvalidBurstType => "420 Invalid Burst Type",
+            JSPRResultCode::SerialPortError => "500 Serial Port Error",
         }
     }
 }
@@ -90,7 +166,7 @@ pub struct JSPRGetApiVersionItem {
 
 #[derive(Debug, Deserialize)]
 pub struct JSPRGetApiVersion {
-    supported_versions: [JSPRGetApiVersionItem; 5],
+    supported_versions: Vec<JSPRGetApiVersionItem, 5>,
     active_version: JSPRGetApiVersionItem,
 }
 
@@ -114,7 +190,7 @@ pub struct JSPRGetMessageProvisioningItem {
 
 #[derive(Debug, Deserialize)]
 pub struct JSPRGetMessageProvisioning {
-    provisioning: [JSPRGetMessageProvisioningItem; 32],
+    provisioning: Vec::<JSPRGetMessageProvisioningItem, 32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,7 +205,7 @@ pub struct JSPRPutMessageOriginate {
 pub struct JSPRPutMessageOriginateSegment {
     topic_id: u16,
     segment_length: u16,
-    segment_start: u16,
+    segment_start: u32,
     message_id: u8,
 }
 
@@ -165,12 +241,14 @@ pub struct JSPRGetSimStatus {
 pub enum RockBlockError {
     Timeout,
     InvalidResponse,
-    CommunicationError,
+    ReceiveOverflow,
 }
 
 const REQUEST_SIZE: usize = 256;
 const RESPONSE_SIZE: usize = 256;
 pub const BODY_SIZE: usize = 256;
+const MAX_SEND_ITERATIONS: usize = 100;
+const MAX_POWER_ON_ITERATIONS: usize = 100;
 
 pub const IMT_DEFAULT_TOPIC: u16 = 244;
 
@@ -264,26 +342,34 @@ impl RockBlock9704 {
         }
 
         self.status = RockBlock9704Status::Transmitting;
+        let mut i = 0;
 
         loop {
             let mut buffer = [0u8; RESPONSE_SIZE];
             let (code, target, length) = self.receive_jspr(&mut buffer).await.expect("Failed to receive JSPR response");
 
+            if code != JSPRResultCode::UnsolicitedMessage {
+                info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str());
+                self.status = RockBlock9704Status::Error;
+                return None;
+            }
+
             match target {
                 JSPRTarget::MessageOriginateStatus => {
                     let (status_response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateStatus>(&buffer[..length as usize]).expect("Failed to parse MessageOriginateStatus response");
-                    info!("[ROCK] Message Status: Topic ID: {}, Message ID: {}, Status: {}", status_response.topic_id, status_response.message_id, status_response.status.as_str());
+                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.status.as_str());
 
                     if status_response.status.as_str() != "mo_ack_received" {
                         self.status = RockBlock9704Status::Error;
                         return None;
                     }
+                    break;
                 },
                 JSPRTarget::MessageOriginateSegment => {
                     let (segment_response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateSegment>(&buffer[..length as usize]).expect("Failed to parse MessageOriginateSegment response");
-                    info!("[ROCK] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length);
+                    info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length);
                     let mut new_buffer = [0u8; BODY_SIZE*2];
-                    let data = &message.body[segment_response.segment_start as usize .. (segment_response.segment_start + segment_response.segment_length) as usize];
+                    let data = &message.body[segment_response.segment_start as usize .. (segment_response.segment_start + segment_response.segment_length as u32) as usize];
                     let new_length = STANDARD.encode_slice(data, &mut new_buffer).expect("Failed to encode base64 segment");
                     self.put_message_originate_segment(
                         message.topic, 
@@ -295,11 +381,19 @@ impl RockBlock9704 {
                 },
                 JSPRTarget::ConstellationState => {
                     let (constellation_response, _) = serde_json_core::from_slice::<JSPRGetConstellationState>(&buffer[..length as usize]).expect("Failed to parse ConstellationState response");
-                    info!("[ROCK] Constellation State: Visible: {}, Signal Bars: {}", constellation_response.constellation_visible, constellation_response.signal_bars);
+                    info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_bars);
                 },
                 _ => {
-                    info!("[ROCK] Unexpected JSPR Target: {}", target.as_str());
+                    info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str());
                 }
+            }
+
+            i += 1;
+
+            if i > MAX_SEND_ITERATIONS {
+                info!("[ROCK] Max iterations reached while sending message");
+                self.status = RockBlock9704Status::Error;
+                return None;
             }
         }
 
@@ -331,9 +425,17 @@ impl RockBlock9704 {
             info!("[ROCK] Powering off RockBlock 9704");
             self.pin_iridium_enable.set_low();
             self.pin_power_enable.set_high();
+            let mut i = 0;
             loop {
                 if self.pin_iridium_status.is_low() {
                     break;
+                }
+                Timer::after_millis(100).await;
+                i += 1;
+                if i > MAX_POWER_ON_ITERATIONS {
+                    info!("[ROCK] Max iterations reached while powering off");
+                    self.status = RockBlock9704Status::Error;
+                    return;
                 }
             }
             self.status = RockBlock9704Status::Off;
@@ -400,18 +502,28 @@ impl RockBlock9704 {
     pub async fn get_api_version(&mut self) -> Option<JSPRGetApiVersion> {
         // send_jspr("GET apiVersion {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ApiVersion, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ApiVersion, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::ApiVersion {
+            info!("[ROCK] Failed to get API version, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetApiVersion>(&message).ok()?;
-        
         Some(response)
     }
 
     pub async fn get_sim_interface(&mut self) -> Option<JSPRGetSimInterface> {
         // send_jspr("GET simInterface {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimInterface, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimInterface, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::SimInterface {
+            info!("[ROCK] Failed to get SIM interface, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetSimInterface>(&message).ok()?;
-        
         Some(response)
     }
 
@@ -419,74 +531,113 @@ impl RockBlock9704 {
         // send_jspr("PUT simInterface {\"interface\":\"internal\"}\r")
         let body = format!(64; "{{\"interface\":\"{}\"}}", interface).expect("Failed to format body");
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let (_, _, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::SimInterface, &body, &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::SimInterface, &body, &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::SimInterface {
+            info!("[ROCK] Failed to put SIM interface, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetSimInterface>(&message).ok()?;
-        
         Some(response)
     }
 
     pub async fn get_operational_state(&mut self) -> Option<JSPRGetOperationalState> {
         // send_jspr("GET operationalState {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::OperationalState, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::OperationalState, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::OperationalState {
+            info!("[ROCK] Failed to get Operational State, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetOperationalState>(&message).ok()?;
-        
         Some(response)
     }
 
     pub async fn get_message_provisioning(&mut self) -> Option<JSPRGetMessageProvisioning> {
         // send_jspr("GET messageProvisioning {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::MessageProvisioning, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::MessageProvisioning, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::MessageProvisioning {
+            info!("[ROCK] Failed to get Message Provisioning, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetMessageProvisioning>(&message).ok()?;
-        
         Some(response)
     }
 
     pub async fn put_message_originate(&mut self, topic: u16, length: u8) -> Option<JSPRPutMessageOriginate> {
-        self.message_reference = self.message_reference.wrapping_add(1);
         let body = format!(128; "{{\"topic_id\":{},\"message_length\":{},\"request_reference\":{}}}", topic, length, self.message_reference).expect("Failed to format body");
         self.message_reference = (self.message_reference + 1) % 100;
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let (_, _, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginate, &body, &mut message).await.ok()?;
-        let (response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginate>(&message).ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginate, &body, &mut message).await.ok()?;
 
+        if status != JSPRResultCode::Ok || target != JSPRTarget::MessageOriginate {
+            info!("[ROCK] Failed to put Message Originate, status code: {}", status.as_str());
+            return None;
+        }
+
+        let (response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginate>(&message).ok()?;
         Some(response)
     }
 
-    pub async fn put_message_originate_segment(&mut self, topic: u16, message_id: u16, segment_start: u16, segment_length: u16, data: &str) -> Option<JSPRPutMessageOriginateSegment> {
+    pub async fn put_message_originate_segment(&mut self, topic: u16, message_id: u16, segment_start: u32, segment_length: u16, data: &str) -> Option<JSPRPutMessageOriginateSegment> {
         let body = format!({128*3}; "{{\"topic_id\":{},\"message_id\":{},\"segment_start\":{},\"segment_length\":{},\"data\":\"{}\"}}", topic, message_id, segment_start, segment_length, data).expect("Failed to format body");
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let (_, _, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginateSegment, &body, &mut message).await.ok()?;
-        let (response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateSegment>(&message).ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginateSegment, &body, &mut message).await.ok()?;
 
+        if status != JSPRResultCode::Ok || target != JSPRTarget::MessageOriginateSegment {
+            info!("[ROCK] Failed to put Message Originate Segment, status code: {}", status.as_str());
+            return None;
+        }
+
+        let (response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateSegment>(&message).ok()?;
         Some(response)
     }
 
     pub async fn get_constellation_state(&mut self) -> Option<JSPRGetConstellationState> {
         // send_jspr("GET constellationState {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ConstellationState, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ConstellationState, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::ConstellationState {
+            info!("[ROCK] Failed to get Constellation State, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetConstellationState>(&message).ok()?;
-        
         Some(response)
     }
 
     pub async fn get_hw_info(&mut self) -> Option<JSPRGetHwInfo> {
         // send_jspr("GET hwInfo {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::HwInfo, "{}", &mut message).await.ok()?;
-        let (response, _) = serde_json_core::from_slice::<JSPRGetHwInfo>(&message).ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::HwInfo, "{}", &mut message).await.ok()?;
         
+        if status != JSPRResultCode::Ok || target != JSPRTarget::HwInfo {
+            info!("[ROCK] Failed to get Hardware Info, status code: {}", status.as_str());
+            return None;
+        }
+
+        let (response, _) = serde_json_core::from_slice::<JSPRGetHwInfo>(&message).ok()?;
         Some(response)
     }
 
     pub async fn get_sim_status(&mut self) -> Option<JSPRGetSimStatus> {
         // send_jspr("GET simStatus {}\r")
         let mut message: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
-        let _ = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimStatus, "{}", &mut message).await.ok()?;
+        let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimStatus, "{}", &mut message).await.ok()?;
+
+        if status != JSPRResultCode::Ok || target != JSPRTarget::SimStatus {
+            info!("[ROCK] Failed to get SIM Status, status code: {}", status.as_str());
+            return None;
+        }
+
         let (response, _) = serde_json_core::from_slice::<JSPRGetSimStatus>(&message).ok()?;
-        
         Some(response)
     }
 
@@ -496,7 +647,7 @@ impl RockBlock9704 {
         target: JSPRTarget,
         body: &str,
         message: &mut [u8]
-    ) -> Result<(JSPRResultCode, JSPRTarget, u8), RockBlockError> {
+    ) -> Result<(JSPRResultCode, JSPRTarget, u16), RockBlockError> {
         self.send_jspr(method, target, body).await;
         self.receive_jspr(message).await
     }
@@ -507,7 +658,7 @@ impl RockBlock9704 {
         target: JSPRTarget,
         body: &str
     ) {
-        let request = String::<256>::from(format!("{} {} {}\r", method.as_str(), target.as_str(), body).expect("Failed to format request"));
+        let request = format!({BODY_SIZE * 4}; "{} {} {}\r", method.as_str(), target.as_str(), body).expect("Failed to format request");
 
         info!("[ROCK] Sending: {}", request.as_str());
         self.uart.write(request.as_bytes()).await.expect("Failed to write request");
@@ -516,14 +667,17 @@ impl RockBlock9704 {
     pub async fn receive_jspr(
         &mut self, 
         message: &mut [u8]
-    ) -> Result<(JSPRResultCode, JSPRTarget, u8), RockBlockError> {
+    ) -> Result<(JSPRResultCode, JSPRTarget, u16), RockBlockError> {
         let mut buffer: [u8; RESPONSE_SIZE] = [0; RESPONSE_SIZE];
         let mut index: usize = 0;
         loop {
             let mut byte: [u8; 1] = [0; 1];
             match self.uart.read(&mut byte).await {
                 Ok(_) => {
-                    if byte[0] == b'\r' || index >= buffer.len() {
+                    if index >= buffer.len() {
+                        return Err(RockBlockError::ReceiveOverflow);
+                    }
+                    if byte[0] == b'\r' {
                         break;
                     }
                     buffer[index] = byte[0];
@@ -550,6 +704,6 @@ impl RockBlock9704 {
         let body_str = parts.next().unwrap_or("");
         message[..body_str.len()].copy_from_slice(body_str.as_bytes());
 
-        Ok((result_code, target, body_str.len() as u8))
+        Ok((result_code, target, body_str.len() as u16))
     }
 }
