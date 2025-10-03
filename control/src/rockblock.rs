@@ -495,7 +495,7 @@ impl RockBlock9704 {
             }
         }
         self.status = RockBlock9704Status::Ready;
-        Some(x as u16)
+        Some(x as u16 - 2) // subtract 2 for CRC
     }
 
     pub async fn power_on(&mut self) {
