@@ -205,7 +205,7 @@ pub struct JSPRGetMessageProvisioning {
 #[derive(Debug, Deserialize)]
 pub struct JSPRPutMessageOriginate {
     topic_id: u16,
-    reference: u8,
+    request_reference: u8,
     message_response: String<32>,
     message_id: u8,
 }
@@ -251,6 +251,7 @@ pub struct JSPRUnsMessageTerminateStatus {
 #[derive(Debug, Deserialize)]
 pub struct JSPRGetConstellationState {
     constellation_visible: bool,
+    signal_level: Option<u8>,
     signal_bars: u8,
 }
 
@@ -320,6 +321,7 @@ pub struct RockBlock9704 {
     pin_iridium_status: gpio::Input<'static>,
     message_reference: u8,
     pub status: RockBlock9704Status,
+    debug: bool,
 }
 
 impl RockBlock9704 {
@@ -336,12 +338,13 @@ impl RockBlock9704 {
             pin_iridium_status,
             message_reference: 0,
             status: RockBlock9704Status::Off,
+            debug: false,
         }
     }
 
     pub async fn send_message(&mut self, mut message: IMTMessage) -> Option<()> {
         if self.status != RockBlock9704Status::Ready {
-            info!("[ROCK] RockBlock 9704 not ready to send message");
+            if self.debug { info!("[ROCK] RockBlock 9704 not ready to send message"); }
             return None;
         }
 
@@ -353,7 +356,7 @@ impl RockBlock9704 {
         };
 
         if !topic_provisioned {
-            info!("[ROCK] Topic {} not provisioned", message.topic);
+            if self.debug { info!("[ROCK] Topic {} not provisioned", message.topic); }
             return None;
         }
 
@@ -361,7 +364,7 @@ impl RockBlock9704 {
         // Append CRC (big-endian) to the end of the message body
         let len = message.length as usize;
         if len + 2 > message.body.len() {
-            info!("[ROCK] Message too long to append CRC");
+            if self.debug { info!("[ROCK] Message too long to append CRC"); }
             return None;
         }
         message.body[len] = (crc >> 8) as u8;
@@ -369,9 +372,9 @@ impl RockBlock9704 {
         message.length += 2;
 
         if let Some(response) = self.put_message_originate(message.topic, message.length).await {
-            info!("[ROCK] Message sent with ID: {}, Reference: {}, Response: {}", response.message_id, response.reference, response.message_response.as_str());
+            if self.debug { info!("[ROCK] Message sent with Topic ID: {}, Message ID: {}, Request Reference: {}, Response: {}", response.topic_id, response.message_id, response.request_reference, response.message_response.as_str()); }
         } else {
-            info!("[ROCK] Failed to send message");
+            if self.debug { info!("[ROCK] Failed to send message"); }
             return None;
         }
 
@@ -383,7 +386,7 @@ impl RockBlock9704 {
             let (code, target, length) = self.receive_jspr(&mut buffer).await.expect("Failed to receive JSPR response");
 
             if code != JSPRResultCode::UnsolicitedMessage {
-                info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str());
+                if self.debug { info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str()); }
                 self.status = RockBlock9704Status::Error;
                 return None;
             }
@@ -391,7 +394,7 @@ impl RockBlock9704 {
             match target {
                 JSPRTarget::MessageOriginateStatus => {
                     let (status_response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateStatus>(&buffer[..length as usize]).expect("Failed to parse MessageOriginateStatus response");
-                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mo_status.as_str());
+                    if self.debug { info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mo_status.as_str()); }
 
                     if status_response.final_mo_status.as_str() != "mo_ack_received" {
                         self.status = RockBlock9704Status::Error;
@@ -401,7 +404,7 @@ impl RockBlock9704 {
                 },
                 JSPRTarget::MessageOriginateSegment => {
                     let (segment_response, _) = serde_json_core::from_slice::<JSPRPutMessageOriginateSegment>(&buffer[..length as usize]).expect("Failed to parse MessageOriginateSegment response");
-                    info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length);
+                    if self.debug { info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length); }
                     let mut new_buffer = [0u8; BODY_SIZE*2];
                     let data = &message.body[segment_response.segment_start as usize .. (segment_response.segment_start + segment_response.segment_length as u32) as usize];
                     let new_length = STANDARD.encode_slice(data, &mut new_buffer).expect("Failed to encode base64 segment");
@@ -415,17 +418,17 @@ impl RockBlock9704 {
                 },
                 JSPRTarget::ConstellationState => {
                     let (constellation_response, _) = serde_json_core::from_slice::<JSPRGetConstellationState>(&buffer[..length as usize]).expect("Failed to parse ConstellationState response");
-                    info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_bars);
+                    if self.debug { info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Level: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_level, constellation_response.signal_bars); }
                 },
                 _ => {
-                    info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str());
+                    if self.debug { info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str()); }
                 }
             }
 
             i += 1;
 
             if i > MAX_SEND_ITERATIONS {
-                info!("[ROCK] Max iterations reached while sending message");
+                if self.debug { info!("[ROCK] Max iterations reached while sending message"); }
                 self.status = RockBlock9704Status::Error;
                 return None;
             }
@@ -445,7 +448,7 @@ impl RockBlock9704 {
             let (code, target, length) = self.receive_jspr(&mut buf).await.expect("Failed to receive JSPR response");
 
             if code != JSPRResultCode::UnsolicitedMessage {
-                info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str());
+                if self.debug { info!("[ROCK][{:02}] JSPR Error: {}", i, code.as_str()); }
                 self.status = RockBlock9704Status::Error;
                 return None;
             }
@@ -453,21 +456,21 @@ impl RockBlock9704 {
             match target {
                 JSPRTarget::MessageTerminate => {
                     let (terminate_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminate>(&buf[..length as usize]).expect("Failed to parse MessageTerminate response");
-                    info!("[ROCK][{:02}] Message Terminate: Topic ID: {}, Message ID: {}, Max Length: {}", i, terminate_response.topic_id, terminate_response.message_id, terminate_response.message_length_max);
+                    if self.debug { info!("[ROCK][{:02}] Message Terminate: Topic ID: {}, Message ID: {}, Max Length: {}", i, terminate_response.topic_id, terminate_response.message_id, terminate_response.message_length_max); }
                 },
                 JSPRTarget::MessageTerminateSegment => {
                     let (segment_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminateSegment>(&buf[..length as usize]).expect("Failed to parse MessageTerminateSegment response");
-                    info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length);
+                    if self.debug { info!("[ROCK][{:02}] Message Segment: Topic ID: {}, Message ID: {}, Segment Start: {}, Segment Length: {}", i, segment_response.topic_id, segment_response.message_id, segment_response.segment_start, segment_response.segment_length); }
                     let mut temp = [0u8; BODY_SIZE*2];
                     let decoded_length = STANDARD.decode_slice(&segment_response.data.as_bytes(), &mut temp).ok()?;
                     buffer[x..x+decoded_length].copy_from_slice(&temp[..decoded_length]);
                     x += decoded_length;
 
-                    info!("[ROCK][{:02}] Received {} bytes, total {}", i, decoded_length, x);
+                    if self.debug { info!("[ROCK][{:02}] Received {} bytes, total {}", i, decoded_length, x); }
                 },
                 JSPRTarget::MessageTerminateStatus => {
                     let (status_response, _) = serde_json_core::from_slice::<JSPRUnsMessageTerminateStatus>(&buf[..length as usize]).expect("Failed to parse MessageTerminateStatus response");
-                    info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mt_status.as_str());
+                    if self.debug { info!("[ROCK][{:02}] Message Status: Topic ID: {}, Message ID: {}, Status: {}", i, status_response.topic_id, status_response.message_id, status_response.final_mt_status.as_str()); }
                     if status_response.final_mt_status.as_str() != "complete" {
                         self.status = RockBlock9704Status::Error;
                         return None;
@@ -476,17 +479,17 @@ impl RockBlock9704 {
                 },
                 JSPRTarget::ConstellationState => {
                     let (constellation_response, _) = serde_json_core::from_slice::<JSPRGetConstellationState>(&buf[..length as usize]).expect("Failed to parse ConstellationState response");
-                    info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_bars);
+                    if self.debug { info!("[ROCK][{:02}] Constellation State: Visible: {}, Signal Level: {}, Signal Bars: {}", i, constellation_response.constellation_visible, constellation_response.signal_level, constellation_response.signal_bars); }
                 },
                 _ => {
-                    info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str());
+                    if self.debug { info!("[ROCK][{:02}] Unexpected JSPR Target: {}", i, target.as_str()); }
                 }
             }
 
             i += 1;
 
             if i > MAX_RECEIVE_ITERATIONS {
-                info!("[ROCK] Max iterations reached while receiving message");
+                if self.debug { info!("[ROCK] Max iterations reached while receiving message"); }
                 self.status = RockBlock9704Status::Error;
                 return None;
             }
@@ -497,7 +500,7 @@ impl RockBlock9704 {
 
     pub async fn power_on(&mut self) {
         if self.status == RockBlock9704Status::Off {
-            info!("[ROCK] Powering on RockBlock 9704");
+            if self.debug { info!("[ROCK] Powering on RockBlock 9704"); }
             self.pin_power_enable.set_low();
             self.pin_iridium_enable.set_high();
             loop {
@@ -506,17 +509,17 @@ impl RockBlock9704 {
                 }
             }
             self.status = RockBlock9704Status::Unchecked;
-            info!("[ROCK] RockBlock 9704 powered on");
+            if self.debug { info!("[ROCK] RockBlock 9704 powered on"); }
         } else {
-            info!("[ROCK] RockBlock 9704 already powered on");
+            if self.debug { info!("[ROCK] RockBlock 9704 already powered on"); }
         }
     }
 
     pub async fn power_off(&mut self) {
         if self.status == RockBlock9704Status::Off {
-            info!("[ROCK] RockBlock 9704 already powered off");
+            if self.debug { info!("[ROCK] RockBlock 9704 already powered off"); }
         } else {
-            info!("[ROCK] Powering off RockBlock 9704");
+            if self.debug { info!("[ROCK] Powering off RockBlock 9704"); }
             self.pin_iridium_enable.set_low();
             self.pin_power_enable.set_high();
             let mut i = 0;
@@ -527,19 +530,19 @@ impl RockBlock9704 {
                 Timer::after_millis(100).await;
                 i += 1;
                 if i > MAX_POWER_ON_ITERATIONS {
-                    info!("[ROCK] Max iterations reached while powering off");
+                    if self.debug { info!("[ROCK] Max iterations reached while powering off"); }
                     self.status = RockBlock9704Status::Error;
                     return;
                 }
             }
             self.status = RockBlock9704Status::Off;
-            info!("[ROCK] RockBlock 9704 powered off");
+            if self.debug { info!("[ROCK] RockBlock 9704 powered off"); }
         }
     }
 
     pub async fn check_status(&mut self) {
         if self.status != RockBlock9704Status::Unchecked {
-            info!("RockBlock 9704 is either off, busy, in error state, or already ready");
+            if self.debug { info!("RockBlock 9704 is either off, busy, in error state, or already ready"); }
             return;
         }
 
@@ -550,7 +553,6 @@ impl RockBlock9704 {
         }
         if !self.valid_sim_interface().await {
             panic!("RockBlock 9704 SIM interface not set to internal");
-            // code sets sim interface to internal
         }
         if !self.valid_operational_state().await {
             panic!("RockBlock 9704 not in active state");
@@ -559,36 +561,36 @@ impl RockBlock9704 {
         }
 
         self.status = RockBlock9704Status::Ready;
-        info!("[ROCK] RockBlock 9704 is ready");
+        if self.debug { info!("[ROCK] RockBlock 9704 is ready"); }
     }
 
     pub async fn valid_api_version(&mut self) -> bool {
         if let Some(data) = self.get_api_version().await {
             let active_version = &data.active_version;
-            info!("[ROCK] API Version: {}.{}.{}", active_version.major, active_version.minor, active_version.patch);
+            if self.debug { info!("[ROCK] API Version: {}.{}.{}", active_version.major, active_version.minor, active_version.patch); }
             true
         } else {
-            info!("[ROCK] Failed to get API Version");
+            if self.debug { info!("[ROCK] Failed to get API Version"); }
             false
         }
     }
 
     pub async fn valid_sim_interface(&mut self) -> bool {
         if let Some(data) = self.get_sim_interface().await {
-            info!("[ROCK] SIM Interface: {}", data.interface.as_str());
+            if self.debug { info!("[ROCK] SIM Interface: {}", data.interface.as_str()); }
             data.interface.as_str() == "internal"
         } else {
-            info!("[ROCK] Failed to get SIM Interface");
+            if self.debug { info!("[ROCK] Failed to get SIM Interface"); }
             false
         }
     }
 
     pub async fn valid_operational_state(&mut self) -> bool {
         if let Some(data) = self.get_operational_state().await {
-            info!("[ROCK] Operational State: {} (reason {})", data.state.as_str(), data.reason);
+            if self.debug { info!("[ROCK] Operational State: {} (reason {})", data.state.as_str(), data.reason); }
             data.state.as_str() == "active"
         } else {
-            info!("[ROCK] Failed to get Operational State");
+            if self.debug { info!("[ROCK] Failed to get Operational State"); }
             false
         }
     }
@@ -599,7 +601,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ApiVersion, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::ApiVersion {
-            info!("[ROCK] Failed to get API version, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get API version, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -613,7 +615,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimInterface, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::SimInterface {
-            info!("[ROCK] Failed to get SIM interface, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get SIM interface, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -628,7 +630,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::SimInterface, &body, &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::SimInterface {
-            info!("[ROCK] Failed to put SIM interface, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to put SIM interface, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -642,7 +644,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::OperationalState, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::OperationalState {
-            info!("[ROCK] Failed to get Operational State, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get Operational State, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -656,7 +658,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::MessageProvisioning, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::MessageProvisioning {
-            info!("[ROCK] Failed to get Message Provisioning, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get Message Provisioning, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -671,7 +673,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginate, &body, &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::MessageOriginate {
-            info!("[ROCK] Failed to put Message Originate, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to put Message Originate, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -685,7 +687,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::PUT, JSPRTarget::MessageOriginateSegment, &body, &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::MessageOriginateSegment {
-            info!("[ROCK] Failed to put Message Originate Segment, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to put Message Originate Segment, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -699,7 +701,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::ConstellationState, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::ConstellationState {
-            info!("[ROCK] Failed to get Constellation State, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get Constellation State, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -713,7 +715,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::HwInfo, "{}", &mut message).await.ok()?;
         
         if status != JSPRResultCode::Ok || target != JSPRTarget::HwInfo {
-            info!("[ROCK] Failed to get Hardware Info, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get Hardware Info, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -727,7 +729,7 @@ impl RockBlock9704 {
         let (status, target, _) = self.fetch_jspr(JSPRMethod::GET, JSPRTarget::SimStatus, "{}", &mut message).await.ok()?;
 
         if status != JSPRResultCode::Ok || target != JSPRTarget::SimStatus {
-            info!("[ROCK] Failed to get SIM Status, status code: {}", status.as_str());
+            if self.debug { info!("[ROCK] Failed to get SIM Status, status code: {}", status.as_str()); }
             return None;
         }
 
@@ -754,7 +756,7 @@ impl RockBlock9704 {
     ) {
         let request = format!({BODY_SIZE * 4}; "{} {} {}\r", method.as_str(), target.as_str(), body).expect("Failed to format request");
 
-        info!("[ROCK] Sending: {}", request.as_str());
+        if self.debug { info!("[ROCK] Sending: {}", request.as_str()); }
         self.uart.write(request.as_bytes()).await.expect("Failed to write request");
     }
 
@@ -784,7 +786,7 @@ impl RockBlock9704 {
             }
         }
         let response = core::str::from_utf8(&buffer[..index]).expect("Failed to parse response");
-        info!("[ROCK] Received: {}", response);
+        if self.debug { info!("[ROCK] Received: {}", response); }
 
         let mut parts = response.splitn(3, ' ');
 
