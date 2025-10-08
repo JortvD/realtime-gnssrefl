@@ -14,6 +14,7 @@ use embassy_rp::uart;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Duration;
+use embassy_time::Instant;
 use embassy_time::Timer;
 use gpio::{Level, Output};
 use embassy_rp::bind_interrupts;
@@ -94,6 +95,7 @@ fn create_clock_config() -> ClockConfig {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    let start = Instant::now();
     info!("[main] startup");
     // Init peripherals
     let mut config: embassy_rp::config::Config = Default::default();
@@ -199,13 +201,13 @@ async fn main(spawner: Spawner) {
         error!("Failed to spawn LED blink task: {}", result.unwrap_err());
     }
     
-    info!("[main] spawned core 0 tasks");
+    info!("[main] startup complete in {} ms", start.elapsed().as_millis());
 }
 
 
 #[embassy_executor::task]
 async fn led_blink(mut led: Output<'static>) {
-    info!("[LED]: starting");
+    info!("[led_]: starting");
     loop {
         led.set_high();
         Timer::after_millis(25).await;
@@ -216,6 +218,7 @@ async fn led_blink(mut led: Output<'static>) {
 
 #[embassy_executor::task]
 async fn watchdog_feeder(wdg: &'static mut Watchdog) {
+    info!("[wdg_]: starting");
     loop {
         Timer::after(Duration::from_millis(500)).await;
         wdg.feed();
