@@ -13,12 +13,19 @@ embassy-executor = { version = "0.9.1", features = [
   "executor-thread",
   "defmt",
 ] }
-embassy-rp = { version = "0.8.0", features = [
-  "defmt",
-  "time-driver",
-  "critical-section-impl",
-  "rp235xa",
-  "binary-info",
-] }
+embassy-rp = { version = "0.8.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
+embassy-sync = "0.6.2"
 embassy-time = "0.5.0"
-panic-probe = "1.0.0"
+embassy-futures = "0.1.2"
+fletcher = "1.0.0"
+heapless = { version = "0.9.1", features = ["serde"] }
+libm = "0.2.15"
+panic-probe = {version = "1.0.0", features = ["print-defmt"]}
+static_cell = "2.1.1"
+serde-json-core = { version = "0.6.0", features = ["defmt"] }
+serde = { version = "1.0.228", default-features = false }
+crc16 = "0.4.0"
+base64 = { version = "0.22.1", default-features = false }
+
+[features]
+scheduler-priority = []

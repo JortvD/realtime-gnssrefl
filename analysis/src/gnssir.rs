@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::db::record::Record;
+use crate::db::record::{Record, Network, Band};
 use crate::db::arc::{Arc};
 use crate::config::Config;
 use crate::math::lombscargle;
