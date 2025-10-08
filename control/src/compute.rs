@@ -5,7 +5,7 @@ use heapless::Vec;
 use libm::{sinf, powf, sqrtf};
 
 use crate::{
-    control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
+    clock::clk_request, control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
 };
 
 const QC_MIN_SAMPLES: u32 = 1000;
@@ -103,7 +103,10 @@ pub async fn task_compute(
         match message {
             ComputeReqMsg::Compute { sector, config } => {
                 info!("[comp] starting computation for sector {}", sector.get_measurement_index());
-                run_compute(&sector, storage, config).await;
+                {
+                    let _clkrequest = clk_request();
+                    run_compute(&sector, storage, config).await;
+                }
                 channel_res.send(ComputeResMsg::Success { sector_uid: sector.get_uid() }).await;
             }
         }

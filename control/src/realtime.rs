@@ -57,13 +57,15 @@ impl RealTime {
         );
     }
 
-    pub fn next_or_first(vec: &[u32], x: u32) -> (u32, usize) {
-        vec.iter()
-            .enumerate()
-            .find(|&(_, &v)| v > x)
-            .map(|(i, &v)| (v, i))
-            .unwrap_or((vec[0], 0))
-    }
+pub fn next_or_first(vec: &[u32], x: u32) -> (u32, usize) {
+    vec.iter()
+        .enumerate()
+        .filter(|&(_, &v)| v > x)
+        .min_by_key(|&(_, v)| v)   
+        .map(|(i, &v)| (v, i))
+        .unwrap_or((vec[0], 0))  
+}
+
 
     // Assumes one measurement per day
     pub fn subtract_wrapping(t1: u32, t2: u32) -> u32 {

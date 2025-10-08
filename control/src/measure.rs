@@ -3,6 +3,7 @@ use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
+use crate::clock::clk_request;
 use crate::control::{MeasureReqMsg, MeasureResMsg};
 use crate::realtime::Deviation;
 use crate::{utils, StorageType};
@@ -22,24 +23,30 @@ pub async fn task_measure(
         match message {
             MeasureReqMsg::GetRefTime => {
                 info!("[meas] fetching reference time from GNSS");
-                gnss_sensor.wake().await;
-                if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
-                    channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
-                } else {
-                    channel_res.send(MeasureResMsg::RefTimeFail).await;
+                {
+                    let _clkrequest = clk_request();
+                    gnss_sensor.wake().await;
+                    if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
+                        channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
+                    } else {
+                        channel_res.send(MeasureResMsg::RefTimeFail).await;
+                    }
+                    gnss_sensor.sleep().await;
                 }
-                gnss_sensor.sleep().await;
             }
             MeasureReqMsg::MeasureSector { sector, config, sleep_gnss } => {
                 info!("[meas] starting measurement for sector {}", sector.get_measurement_index());
-                if !gnss_sensor.is_awake() {
-                    gnss_sensor.wake().await;
+                {
+                    let _clkrequest = clk_request();
+                    if !gnss_sensor.is_awake() {
+                        gnss_sensor.wake().await;
+                    }
+                    let deviation = run_measure(&mut gnss_sensor, storage, &sector, &config).await;
+                    if sleep_gnss {
+                        gnss_sensor.sleep().await;
+                    }
+                    channel_res.send(MeasureResMsg::SectorSuccess { sector_uid: sector.get_uid(), deviation }).await;
                 }
-                let deviation = run_measure(&mut gnss_sensor, storage, &sector, &config).await;
-                if sleep_gnss {
-                    gnss_sensor.sleep().await;
-                }
-                channel_res.send(MeasureResMsg::SectorSuccess { sector_uid: sector.get_uid(), deviation }).await;
             }
         }
     }

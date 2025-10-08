@@ -3,7 +3,7 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, BufWriter};
 use std::thread::sleep;
 use chrono::{Utc, Timelike, Datelike};
 
@@ -28,6 +28,9 @@ fn tweak_line(line: &str, t: chrono::DateTime<chrono::Utc>) -> String {
 
 fn main() -> Result<()> {
     // ==== tweakable options ====
+    let use_file_output = true;
+    let output_file_path = "NMEA_extended.txt";
+    let extend_factor = 1;
     let port_path = "/dev/ttyACM0";
     let baud = 921_600;
     let min_part_interval_ms: u64 = 100;
@@ -35,13 +38,19 @@ fn main() -> Result<()> {
     let mut time = chrono::DateTime::parse_from_rfc3339("2025-10-01T12:25:00Z")?.with_timezone(&Utc);
     // ===========================
 
-    let builder = serialport::new(port_path, baud)
-        .data_bits(DataBits::Eight)
-        .parity(Parity::None)
-        .stop_bits(StopBits::One)
-        .flow_control(FlowControl::None)
-        .timeout(Duration::from_millis(1000));
-    let mut port = builder.open()?;
+    // Create writer: either file or serial port
+    let boxed_writer: Box<dyn Write> = if use_file_output {
+        Box::new(BufWriter::new(File::create(output_file_path)?))
+    } else {
+        let builder = serialport::new(port_path, baud)
+            .data_bits(DataBits::Eight)
+            .parity(Parity::None)
+            .stop_bits(StopBits::One)
+            .flow_control(FlowControl::None)
+            .timeout(Duration::from_millis(1000));
+        Box::new(builder.open()?)
+    };
+    let mut writer = BufWriter::new(boxed_writer); // buffer for performance
 
     let file = File::open("data/nmea.txt")?;
     let lines: Vec<String> = BufReader::new(file).lines().collect::<Result<_, _>>()?;
@@ -55,24 +64,26 @@ fn main() -> Result<()> {
     }
     if !cur.is_empty() { parts.push(cur); }
 
-    loop {
+    for _ in 0..extend_factor {
         for part in &parts {
             let part_start = Instant::now();
             for line in part {
                 // "Now" is base + elapsed since we started streaming
                 let out = tweak_line(line, time);
-                writeln!(port, "{}", out)?;
+                writeln!(writer, "{}", out)?;
             }
-            port.flush()?;
+            writer.flush()?;
             let elapsed = part_start.elapsed();
-            if elapsed < Duration::from_millis(min_part_interval_ms) {
-                println!(
-                    "[{}] Part sent in {} ms, sleeping {} ms",
-                    time.format("%Y-%m-%d %H:%M:%S%"),
-                    elapsed.as_millis(),
-                    (min_part_interval_ms as i128 - elapsed.as_millis() as i128)
-                );
-                sleep(Duration::from_millis(min_part_interval_ms) - elapsed);
+            if !use_file_output {
+                if elapsed < Duration::from_millis(min_part_interval_ms) {
+                    println!(
+                        "[{}] Part sent in {} ms, sleeping {} ms",
+                        time.format("%Y-%m-%d %H:%M:%S%"),
+                        elapsed.as_millis(),
+                        (min_part_interval_ms as i128 - elapsed.as_millis() as i128)
+                    );
+                    sleep(Duration::from_millis(min_part_interval_ms) - elapsed);
+                }
             }
             // Advance the RMC date seamlessly if we loop; keeps dates moving forward
             time = time + chrono::Duration::seconds(1);
