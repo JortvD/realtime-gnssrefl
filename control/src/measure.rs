@@ -1,13 +1,23 @@
-use defmt::info;
+use defmt::{info, Format};
 use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::clock::clk_request;
-use crate::control::{MeasureReqMsg, MeasureResMsg};
+use crate::messages::{MeasureReqMsg, MeasureResMsg};
+use crate::nmea::NMEAParser;
 use crate::realtime::Deviation;
-use crate::{utils, StorageType};
-use crate::{gnss::GNSSSensor, storage::BinStorage, types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE}, utils::seconds_to_time_str};
+use crate::storage::{BinStorage};
+use crate::types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE};
+use crate::utils::{seconds_to_time_str, date_from_days};
+use crate::StorageType;
+use crate::gnss::GNSSSensor;
+
+#[derive(Debug, Format)]
+pub enum SectorFailError {
+    BinOverflow,
+    StorageAccess,
+    StorageWrite,
+}
 
 #[embassy_executor::task]
 pub async fn task_measure(
@@ -16,36 +26,38 @@ pub async fn task_measure(
     storage: &'static StorageType,
     mut gnss_sensor: GNSSSensor
 ) {
-    // Get sector & config
+    info!("[meas] starting");
     loop {
-        info!("[meas] Wait for request");
+        info!("[meas] waiting for request...");
         let message = channel_req.receive().await;
         match message {
             MeasureReqMsg::GetRefTime => {
                 info!("[meas] fetching reference time from GNSS");
-                {
-                    let _clkrequest = clk_request();
-                    gnss_sensor.wake().await;
-                    if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
-                        channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
-                    } else {
-                        channel_res.send(MeasureResMsg::RefTimeFail).await;
-                    }
-                    gnss_sensor.sleep().await;
+                gnss_sensor.wake().await;
+                if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
+                    channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
+                } else {
+                    channel_res.send(MeasureResMsg::RefTimeFail).await;
                 }
+                gnss_sensor.sleep().await;
             }
             MeasureReqMsg::MeasureSector { sector, config, sleep_gnss } => {
                 info!("[meas] starting measurement for sector {}", sector.get_measurement_index());
-                {
-                    let _clkrequest = clk_request();
-                    if !gnss_sensor.is_awake() {
-                        gnss_sensor.wake().await;
-                    }
-                    let deviation = run_measure(&mut gnss_sensor, storage, &sector, &config).await;
-                    if sleep_gnss {
-                        gnss_sensor.sleep().await;
-                    }
-                    channel_res.send(MeasureResMsg::SectorSuccess { sector_uid: sector.get_uid(), deviation }).await;
+                gnss_sensor.wake().await;
+                let result = run_measure(&mut gnss_sensor, storage, &sector, &config).await;
+                if sleep_gnss {
+                    gnss_sensor.sleep().await;
+                }
+                if result.is_err() {
+                    let error = result.err().unwrap();
+                    info!("[meas] measurement for sector {} failed: {:?}", sector.get_measurement_index(), error);
+                    channel_res.send(MeasureResMsg::SectorFail { error }).await;
+                } else {
+                    info!("[meas] measurement for sector {} completed successfully", sector.get_measurement_index());
+                    channel_res.send(MeasureResMsg::SectorSuccess { 
+                        sector_uid: sector.get_uid(), 
+                        deviation: result.unwrap() 
+                    }).await;
                 }
             }
         }
@@ -53,15 +65,18 @@ pub async fn task_measure(
     
 }
 
-async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) -> Deviation {
-    let bin_storage = BinStorage::new(config.seconds_per_bin);
-    let mut bin_data = Vec::<u8, {4 * BURST_SIZE * BIN_BURST_SIZE}>::new();
+const BIN_DATA_SIZE: usize = 4 * BURST_SIZE * BIN_BURST_SIZE;
+
+async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) -> Result<Deviation, SectorFailError> {
+    let bin_storage = BinStorage::new();
+    let mut bin_data = Vec::<u8, BIN_DATA_SIZE>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_index();
     let deviation: Deviation;
+    let mut parser = NMEAParser::new_from_config(config);
 
     loop {
         let nmeaburst= gnss_sensor.read_burst().await;
-        let burst = gnss_sensor.parser.parse_burst(&nmeaburst, false);
+        let burst = parser.parse_burst(&nmeaburst, false);
         let time_str = seconds_to_time_str(burst.time);
 
         if sector.is_time_before_sector(burst.time) {
@@ -91,41 +106,38 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         let bin_id = sector.get_bin_for_time(burst.time);
 
         if bin_id != last_bin_id {
-            {
-                let mut storage_lock = storage.lock().await;
-                let storage = storage_lock.as_mut().expect("Storage not initialized");
-                bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
-            }
+            write_bin(storage, &bin_storage, last_bin_id, &bin_data).await?;
             bin_data.clear();
             info!("[meas][{}] switched to new bin {}, wrote previous bin {} to storage", time_str.as_str(), bin_id, last_bin_id);
             last_bin_id = bin_id;
         }
 
-        let data = burst.to_bytes();
-
-        bin_data.extend_from_slice(&data).expect("Bin data overflow");
+        bin_data.extend_from_slice(&burst.to_bytes()).map_err(|_| SectorFailError::BinOverflow)?;
 
         info!("[meas][{}] burst added to current bin {} (size: {} bytes)", time_str.as_str(), bin_id, bin_data.len());
     }
 
-    {
-        let mut storage_lock = storage.lock().await;
-        let storage = storage_lock.as_mut().expect("Storage not initialized");
-        bin_storage.write(storage, last_bin_id, &bin_data).expect("Failed to write bin to storage");
-    }
+    write_bin(storage, &bin_storage, last_bin_id, &bin_data).await?;
     bin_data.clear();
     info!("[meas] wrote last bin {} to storage", last_bin_id);
 
-    deviation
+    Ok(deviation)
+}
+
+async fn write_bin(storage: &'static StorageType, bin_storage: &BinStorage, bin_id: u32, bin_data: &Vec<u8, BIN_DATA_SIZE>) -> Result<(), SectorFailError> {
+    let mut storage_lock = storage.lock().await;
+    let storage = storage_lock.as_mut().ok_or(SectorFailError::StorageAccess)?;
+    bin_storage.write(storage, bin_id, bin_data).map_err(|_| SectorFailError::StorageWrite)
 }
 
 pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> {
     gnss_sensor.read_burst().await;
+    let mut parser = NMEAParser::new();
     let nmeaburst = gnss_sensor.read_burst().await;
-    let burst = gnss_sensor.parser.parse_burst(&nmeaburst, true);
+    let burst = parser.parse_burst(&nmeaburst, true);
     if let Some(date) = burst.date {
         if date > 40000 {
-            let date = utils::date_from_days(date as i64);
+            let date = date_from_days(date as i64);
             info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
             None
         } else {

@@ -1,7 +1,6 @@
 use defmt::info;
 
-use embassy_futures::select::{select, Either};
-use embassy_rp::{gpio, pac::Interrupt::PIO0_IRQ_1, uart};
+use embassy_rp::{gpio, uart};
 use embassy_time::Timer;
 use heapless::{format, String, Vec};
 use base64::{engine::general_purpose::STANDARD, Engine as _};

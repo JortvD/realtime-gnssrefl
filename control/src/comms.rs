@@ -1,11 +1,15 @@
 
-use defmt::info;
+use defmt::{info, Format};
 use embassy_futures::select::{select, Either};
 use embassy_time::{Instant, Timer};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
-use crate::{ control::{CommReqMsg, CommResMsg, MAX_SECTORS}, rockblock::{IMTMessage, RockBlock9704, BODY_SIZE, IMT_DEFAULT_TOPIC}, storage::MeasurementStorage, types::{Measurement, Sector, BLOCK_SIZE, NUM_BINS, NUM_CONTAINER_BLOCKS, NUM_MEASUREMENTS}, StorageType};
+use crate::messages::{CommReqMsg, CommResMsg};
+use crate::rockblock::{IMTMessage, RockBlock9704, BODY_SIZE, IMT_DEFAULT_TOPIC};
+use crate::storage::MeasurementStorage;
+use crate::types::{Measurement, Sector, MAX_SECTORS, NUM_MEASUREMENTS};
+use crate::StorageType;
 
 pub struct MeasurementPacket { // 5 bytes
     relative_height_mean: u16,
@@ -71,7 +75,6 @@ impl Packet {
     }
 }
 
-
 #[embassy_executor::task]
 pub async fn task_comms(
     channel_req: &'static Channel<CriticalSectionRawMutex, CommReqMsg, 8>,
@@ -79,9 +82,9 @@ pub async fn task_comms(
     storage: &'static StorageType,
     mut rockblock: RockBlock9704,
 ) {
+    info!("[comm] starting");
     loop {
-        info!("[comm] waiting for request");
-        run_comms_test(&mut rockblock).await;
+        info!("[comm] waiting for request...");
         let select = select(
             channel_req.receive(), 
             Timer::after_secs(u64::MAX)
@@ -90,84 +93,25 @@ pub async fn task_comms(
             Either::First(CommReqMsg::Send { sectors, config }) => {
                 let sector = sectors.get(0).expect("At least one sector should be present");
                 info!("[comm] starting communication for sector {}", sector.get_measurement_index());
-                run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
-                let mut uids = Vec::<u32, MAX_SECTORS>::new();
-                uids.push(sector.get_uid()).ok();
-                channel_res.send(CommResMsg::Success { sector_uids: uids }).await;
+                let result = run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
+                if result.is_err() {
+                    info!("[comm] communication for sector {} failed", sector.get_measurement_index());
+                    channel_res.send(CommResMsg::Fail).await;
+                } else {
+                    channel_res.send(CommResMsg::Success { sector_uids: result.unwrap() }).await;
+                }
             }
-            Either::Second(command) => {
-                info!("[comm] rockblock command received");
-                // match command.ok().expect("msg") {
-                //     RockBlockCommand::DMP1 => dump_bin_storage(&mut rockblock, storage).await,
-                //     _ => {},
-                // }
-            }
+            Either::Second(_) => {}
         }
     }
 }
 
-async fn run_comms_test(rockblock: &mut RockBlock9704) {
-    info!("[comm] Turning on RockBlock for test");
-    rockblock.power_on().await;
-    if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
-        info!("[comm] RockBlock not ready to be checked, aborting comms test");
-        return;
-    }
-    info!("[comm] Checking RockBlock status for test");
-    rockblock.check_status().await;
-    if rockblock.status != crate::rockblock::RockBlock9704Status::Ready {
-        info!("[comm] RockBlock not ready, aborting comms test");
-        return;
-    }
-    info!("[comm] RockBlock ready, sending test message");
-
-    for _ in 0..5 {
-        let response = rockblock.get_constellation_state().await;
-        if let Some(response) = response {
-            info!("[comm] Get constellation response: {}, {}, body length {}", response.constellation_visible, response.signal_level, response.signal_bars);
-        } else {
-            info!("[comm] Get constellation message failed");
-        }
-        Timer::after_secs(5).await;
-    }
-
-    let mut body = [0u8; 256];
-    let hello = b"Wie t leest trekt een bak";
-    body[..hello.len()].copy_from_slice(hello);
-
-    let message = IMTMessage::new(
-        IMT_DEFAULT_TOPIC,
-        body,
-        hello.len() as u8,
-    );
-
-    rockblock.send_message(message).await;
-    info!("[comm] Test message sent");
-
-    info!("[comm] Turning off RockBlock after test");
-    rockblock.power_off().await;
-    info!("[comm] RockBlock powered off after test");
-}
-
-async fn dump_bin_storage(rockblock: &mut RockBlock9704, storage: &'static StorageType) {
-    let mut storage_lock = storage.lock().await;
-    let storage = storage_lock.as_mut().expect("Storage not initialized");
-
-    for bin in 0..NUM_BINS {
-        for block in 0..NUM_CONTAINER_BLOCKS {
-            let mut io_buf = [0u8; 256];
-
-            storage.read(bin, (block * BLOCK_SIZE) as u32, &mut io_buf).expect("");
-
-            // let message = IMTMessage::new(
-            //     IMT_DEFAULT_TOPIC,
-            //     io_buf,
-            //     BLOCK_SIZE as u8,
-            // );
-
-            // rockblock.send_message(message).await;
-        }
-    }
+#[derive(Debug, Format)]
+pub enum CommsError {
+    StorageAccess,
+    RockBlockNoPower,
+    RockBlockNotReady,
+    RockBlockSendFail,
 }
 
 async fn run_comms(
@@ -175,18 +119,18 @@ async fn run_comms(
     storage: &'static StorageType,
     sector: &Sector,
     num_measurements: u32,
-) {
+) -> Result<Vec<u32, MAX_SECTORS>, CommsError> {
     info!("[comm] Turning on RockBlock");
     rockblock.power_on().await;
     if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
         info!("[comm] RockBlock not ready to be checked, aborting comms");
-        return;
+        return Err(CommsError::RockBlockNoPower);
     }
     info!("[comm] Checking RockBlock status");
     rockblock.check_status().await;
     if rockblock.status != crate::rockblock::RockBlock9704Status::Ready {
         info!("[comm] RockBlock not ready, aborting comms");
-        return;
+        return Err(CommsError::RockBlockNotReady);
     }
     info!("[comm] RockBlock ready, preparing packet");
 
@@ -198,12 +142,14 @@ async fn run_comms(
     );
 
     let measurement_storage = MeasurementStorage::new();
+    let mut uids = Vec::<u32, MAX_SECTORS>::new();
+    uids.push(sector.get_uid()).ok();
 
     for i in 0..num_measurements {
         let measurement: Option<Measurement>;
         {
             let mut storage_lock = storage.lock().await;
-            let storage = storage_lock.as_mut().expect("Storage not initialized");
+            let storage = storage_lock.as_mut().ok_or(CommsError::StorageAccess)?;
             measurement = measurement_storage.read(storage, (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32);
         }
         if measurement.is_none() {
@@ -235,12 +181,18 @@ async fn run_comms(
         len as u8,
     );
 
-    rockblock.send_message(message).await;
+    let result = rockblock.send_message(message).await;
+    if result.is_none() {
+        info!("[comm] RockBlock send failed after {} ms", (Instant::now() - start).as_millis());
+        return Err(CommsError::RockBlockSendFail);
+    }
     info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
 
     info!("[comm] Turning off RockBlock");
     rockblock.power_off().await;
     info!("[comm] RockBlock powered off");
+
+    Ok(uids)
 }
 
 fn mean_f32_to_u16(value: f32, max: f32) -> u16 {

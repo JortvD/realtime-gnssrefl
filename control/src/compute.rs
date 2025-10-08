@@ -1,24 +1,20 @@
 use defmt::*;
+use embassy_futures::yield_now;
 use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
-use libm::{sinf, powf, sqrtf};
+use libm::{sinf, sqrtf};
 
-use crate::{
-    clock::clk_request, control::{ComputeReqMsg, ComputeResMsg}, math::{self, quicksort_xy, LsScratch}, storage::{BinStorage, FlashStorage, MeasurementStorage}, types::{Config, Measurement, Observation, Sector, BIN_BURST_SIZE, BURST_SIZE}, StorageType
-};
-
-const QC_MIN_SAMPLES: u32 = 1000;
-const QC_MIN_MAX_AMP: f32 = 500.0;
-const QC_MIN_PEAK_TO_MEAN: f32 = 3.0;
+use crate::StorageType;
+use crate::storage::{FlashStorage, BinStorage, MeasurementStorage};
+use crate::types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE};
+use crate::messages::{ComputeReqMsg, ComputeResMsg};
+use crate::types::{Measurement, Observation};
+use crate::math::{quicksort_xy, lombscargle_no_std, polyfit_and_smooth_no_std};
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
 const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 1;
-
-const MIN_HEIGHT: f32 = 2.0;
-const MAX_HEIGHT: f32 = 7.0;
-const STEP_SIZE: f32 = 0.05;
 
 const MAX_BINS: usize = 12;
 
@@ -91,23 +87,34 @@ impl Record {
     }
 }
 
+#[derive(Debug, Format)]
+pub enum ComputeError {
+    ObservationOverflow,
+    StorageAccess,
+    StorageWrite,
+}
+
 #[embassy_executor::task]
 pub async fn task_compute(
     channel_req: &'static Channel<CriticalSectionRawMutex, ComputeReqMsg, 8>,
     channel_res: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
     storage: &'static StorageType,
 ) {
+    info!("[comp] starting");
     loop {
-        info!("[comp] waiting for request");
+        info!("[comp] waiting for request...");
         let message = channel_req.receive().await;
         match message {
             ComputeReqMsg::Compute { sector, config } => {
                 info!("[comp] starting computation for sector {}", sector.get_measurement_index());
-                {
-                    let _clkrequest = clk_request();
-                    run_compute(&sector, storage, config).await;
+                match run_compute(&sector, storage, &config).await {
+                    Ok(()) => {
+                        channel_res.send(ComputeResMsg::Success { sector_uid: sector.get_uid() }).await;
+                    },
+                    Err(e) => {
+                        channel_res.send(ComputeResMsg::ComputeFail { error: e }).await;
+                    }
                 }
-                channel_res.send(ComputeResMsg::Success { sector_uid: sector.get_uid() }).await;
             }
         }
     }
@@ -116,11 +123,11 @@ pub async fn task_compute(
 async fn run_compute(
     sector: &Sector, 
     storage: &'static StorageType,
-    config: Config,
-) {
+    config: &Config,
+) -> Result<(), ComputeError> {
     // One reusable IO buffer for the whole task (no per-call stack duplication).
     let total_start = Instant::now();
-    let bin_storage = BinStorage::new(config.seconds_per_bin);
+    let bin_storage = BinStorage::new();
     let measurement_storage = MeasurementStorage::new();
     let mut io_buf = [0u8; BUF_BYTES]; // 24 * 64 * 4 = 61440 bytes
 
@@ -129,8 +136,8 @@ async fn run_compute(
     let start = Instant::now();
     {
         let mut storage_lock = storage.lock().await;
-        let storage = storage_lock.as_mut().expect("Storage not initialized");
-        queue = build_arc_queue(&sector, &bin_storage, storage, &mut io_buf);
+        let storage = storage_lock.as_mut().ok_or(ComputeError::StorageAccess)?;
+        queue = build_arc_queue(&sector, &bin_storage, storage, &mut io_buf, &config)?;
     }
     info!(
         "[comp] created queue with {} arcs in {} ms",
@@ -139,7 +146,7 @@ async fn run_compute(
     );
 
     let start = Instant::now();
-    let (range, size) = lin_range(MIN_HEIGHT, MAX_HEIGHT, STEP_SIZE);
+    let (range, size) = lin_range(config.min_relative_height, config.max_relative_height, config.relative_height_step_size);
     info!(
         "[comp] generated linear range with {} steps in {} ms",
         size,
@@ -178,7 +185,7 @@ async fn run_compute(
         let (num_records, first_net_band);
         {
             let mut storage_lock = storage.lock().await;
-            let storage = storage_lock.as_mut().expect("Storage not initialized");
+            let storage = storage_lock.as_mut().ok_or(ComputeError::StorageAccess)?;
             (num_records, first_net_band) = collect_arc_records(
                 &sector,
                 &bin_storage,
@@ -188,7 +195,8 @@ async fn run_compute(
                 &mut times,
                 &mut elevs,
                 &mut snrs,
-            );
+                &config
+            )?;
         }
         info!(
             "[comp][{:03}/{:03}] fetched {} records in {} ms",
@@ -198,14 +206,24 @@ async fn run_compute(
             (Instant::now() - start).as_millis()
         );
 
-        // if num_records < QC_MIN_SAMPLES {
-        //     info!("[comp][{:03}/{:03}] insufficient records, skip", idx, total_arcs);
-        //     continue;
-        // }
+        let min_elev = elevs.iter().fold(f32::INFINITY, |a, &b| libm::fminf(a, b));
+        let max_elev = elevs.iter().fold(f32::NEG_INFINITY, |a, &b| libm::fmaxf(a, b));
+
+        if max_elev - min_elev < config.qc_min_elevation_range as f32 {
+            info!(
+                "[comp][{:03}/{:03}] elevation range {} too small, skipping",
+                idx,
+                total_arcs,
+                max_elev - min_elev
+            );
+            yield_now().await;
+            continue;
+        }
+
 
         // Make sure elevation is smooth over time
         let start = Instant::now();
-        math::polyfit_and_smooth_no_std(&times, &mut elevs);
+        polyfit_and_smooth_no_std(&times, &mut elevs);
         info!(
             "[comp][{:03}/{:03}] smoothed elevation in {} ms",
             idx,
@@ -251,10 +269,9 @@ async fn run_compute(
         for _ in 0..size {
             ampls.push(0.0).ok();
         }
-       
 
         let start = Instant::now();
-        math::lombscargle_no_std::<{ BURST_SIZE * MAX_BINS }>(&elevs, &snrs, MIN_HEIGHT, STEP_SIZE, size, &mut ampls);
+        lombscargle_no_std::<{ BURST_SIZE * MAX_BINS }>(&elevs, &snrs, config.min_relative_height, config.relative_height_step_size, size, &mut ampls).await;
         info!(
             "[comp][{:03}/{:03}] Lomb-Scargle in {} ms",
             idx,
@@ -263,7 +280,7 @@ async fn run_compute(
         );
 
         if let Some((max_amp, max_rh, mean_amp)) = ampl_stats(&range, &ampls) {
-            let _ = observations.push(Observation {
+            let observation = Observation {
                 sat_id: arc.id,
                 start_time: arc.start_time,
                 end_time: arc.end_time,
@@ -272,60 +289,74 @@ async fn run_compute(
                 mean_amp,
                 num_recs: num_records,
                 used: false,
-            });
+            };
+
+            info!(
+                "[comp][{:03}/{:03}] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {} in {} ms",
+                idx,
+                total_arcs,
+                observation.sat_id, 
+                observation.start_time, 
+                observation.end_time,
+                observation.max_amp, 
+                observation.max_rh, 
+                observation.mean_amp,
+                observation.peak_to_mean(),
+                observation.num_recs,
+                (Instant::now() - full_start).as_millis()
+            );
+
+            observations.push(observation).map_err(|_| ComputeError::ObservationOverflow)?;
         } else {
-            info!("[comp][{:03}/{:03}] no valid amplitude values, skipping", idx, total_arcs);
+            info!("[comp][{:03}/{:03}] no valid amplitude values, skipping after {} ms", idx, total_arcs, (Instant::now() - full_start).as_millis());
         }
 
-        info!(
-            "[comp][{:03}/{:03}] finished arc in {} ms",
-            idx,
-            total_arcs,
-            (Instant::now() - full_start).as_millis()
-        );
+        yield_now().await;
     }
 
+    // Calculate IQR
+    let n_observations = observations.len();
+    let (min_bound, max_bound) = if n_observations >= 4 {
+        // Sort rh_values
+        observations.sort_unstable_by(|a, b| a.max_rh.partial_cmp(&b.max_rh).unwrap_or(core::cmp::Ordering::Equal));
+        let q1_idx = n_observations / 4;
+        let q3_idx = 3 * n_observations / 4;
+        let q1 = observations[q1_idx].max_rh;
+        let q3 = observations[q3_idx].max_rh;
+        let iqr = q3 - q1;
+        let min_bound = q1 - config.qc_iqr_size * iqr;
+        let max_bound = q3 + config.qc_iqr_size * iqr;
+        (min_bound, max_bound)
+    } else {
+        (0.0, 100.0)
+    };
+
+    info!("[comp] QC bounds: min {}, max {}", min_bound, max_bound);
+
+    let mut num_used = 0;
     let mut rh_sum: f32 = 0.0;
-    let mut used_count: u32 = 0;
 
-    for observation in &mut observations {
-        if observation.max_amp < QC_MIN_MAX_AMP {
-            info!(
-                "[comp] sat {} ({}..{}) - max_amp {} too low, skipping",
-                observation.sat_id, observation.start_time, observation.end_time, observation.max_amp
-            );
-            continue;
-        }
-        else if observation.peak_to_mean() < QC_MIN_PEAK_TO_MEAN {
-            info!(
-                "[comp] sat {} ({}..{}) - peak/mean {} too low, skipping",
-                observation.sat_id, observation.start_time, observation.end_time, observation.peak_to_mean()
-            );
+    for obs in observations.iter_mut() {
+        if obs.max_rh < min_bound || obs.max_rh > max_bound {
             continue;
         }
 
-        info!(
-            "[comp] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {}",
-            observation.sat_id, observation.start_time, observation.end_time,
-            observation.max_amp, observation.max_rh, observation.mean_amp,
-            observation.peak_to_mean(), observation.num_recs
-        );
-        observation.used = true;
-        rh_sum += observation.max_rh;
-        used_count += 1;
+        obs.used = true;
+        num_used += 1;
+        rh_sum += obs.max_rh;
     }
 
-    let rh_mean = rh_sum / used_count as f32;
-    let mut rh_std_sum: f32 = 0.0;
+    let rh_mean = if num_used > 0 { rh_sum / num_used as f32 } else { 0.0 };
+    let mut rh_var_acc: f32 = 0.0;
 
-    for observation in &observations {
-        if !observation.used {
-            continue;
+    for obs in observations.iter() {
+        if obs.used {
+            let diff = obs.max_rh - rh_mean;
+            rh_var_acc += diff * diff;
         }
-        rh_std_sum += powf(observation.max_rh - rh_mean, 2.0);
     }
 
-    let rh_std = sqrtf(rh_std_sum / used_count as f32);
+    let rh_std = if num_used > 1 { sqrtf(rh_var_acc / (num_used as f32 - 1.0)) } else { 0.0 };
 
     let mut measurement = Measurement::new(
         queue.len() as u32, 
@@ -341,16 +372,16 @@ async fn run_compute(
 
     {
         let mut storage_lock = storage.lock().await;
-        let storage = storage_lock.as_mut().expect("Storage not initialized");
-        measurement_storage.store(storage, sector.get_measurement_index(), measurement);
+        let storage = storage_lock.as_mut().ok_or(ComputeError::StorageAccess)?;
+        measurement_storage.store(storage, sector.get_measurement_index(), measurement).map_err(|_| ComputeError::StorageWrite)?;
     }
 
-    if used_count > 0 {
+    if num_used > 0 {
         info!(
             "[comp] overall mean rh: {} (std {}, samples {}) in {} ms",
             rh_mean,
             rh_std,
-            used_count,
+            num_used,
             (Instant::now() - total_start).as_millis()
         );
     } else {
@@ -358,8 +389,9 @@ async fn run_compute(
             "[comp] no valid observations in {} ms",
             (Instant::now() - total_start).as_millis()
         );
-        return;
     }
+
+    Ok(())
 }
 
 #[inline]
@@ -437,12 +469,13 @@ fn build_arc_queue(
     bin_storage: &BinStorage,
     storage: &mut FlashStorage,
     io_buf: &mut [u8; BUF_BYTES],
-) -> ArcQueue {
+    config: &Config,
+) -> Result<ArcQueue, ComputeError> {
     let mut queue: ArcQueue = Vec::new();
 
     info!("[comp] building arc queue for sector {}", sector.get_measurement_index());
 
-    for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
+    for_each_record_in_sector(sector, bin_storage, storage, io_buf, config, |time, rec| {
         let id = rec.get_id();
 
         // Find most recent arc for this id (search from end).
@@ -457,9 +490,9 @@ fn build_arc_queue(
         } else {
             queue.push(Arc { id, start_time: time, end_time: time }).ok();
         }
-    });
+    })?;
 
-    queue
+    Ok(queue)
 }
 
 /// Stream through sector and fill `times`, `elevs`, `snrs` for one arc.
@@ -473,11 +506,12 @@ fn collect_arc_records(
     times: &mut SampleVec,
     elevs: &mut SampleVec,
     snrs: &mut SampleVec,
-) -> (u32, Option<(u8, bool)>) {
+    config: &Config
+) -> Result<(u32, Option<(u8, bool)>), ComputeError> {
     let mut num: u32 = 0;
     let mut first: Option<(u8, bool)> = None;
 
-    for_each_record_in_sector(sector, bin_storage, storage, io_buf, |time, rec| {
+    for_each_record_in_sector(sector, bin_storage, storage, io_buf, config, |time, rec| {
         if rec.get_id() == arc.id && time >= arc.start_time && time <= arc.end_time {
             if first.is_none() {
                 first = Some((rec.get_network(), rec.get_band()));
@@ -487,9 +521,9 @@ fn collect_arc_records(
             elevs.push(rec.get_elevation() as f32).ok();
             snrs.push(rec.get_snr() as f32).ok();
         }
-    });
+    })?;
 
-    (num, first)
+    Ok((num, first))
 }
 
 /// Core streaming reader: iterates every (time, Record) in all bins without allocating.
@@ -499,9 +533,11 @@ fn for_each_record_in_sector<F>(
     bin_storage: &BinStorage,
     storage: &mut FlashStorage,
     io_buf: &mut [u8; BUF_BYTES],
+    config: &Config,
     mut f: F,
-) where
-    F: FnMut(u16, Record),
+) -> Result<(), ComputeError>
+where
+    F: FnMut(u16, Record)
 {
     let bins = sector.get_bins();
 
@@ -523,19 +559,28 @@ fn for_each_record_in_sector<F>(
 
                     for _ in 0..num {
                         if let Some(smp_b) = words.next() {
-                            let sample =
-                                u32::from_le_bytes([smp_b[0], smp_b[1], smp_b[2], smp_b[3]]);
-                            f(time, Record::from_sample(sample));
+                            let sample = Record::from_sample(u32::from_le_bytes([smp_b[0], smp_b[1], smp_b[2], smp_b[3]]));
+                            
+                            if sample.get_elevation() < config.post_min_elevation as u8
+                                || sample.get_elevation() > config.post_max_elevation as u8
+                                || sample.get_azimuth() < config.post_min_azimuth as u16
+                                || sample.get_azimuth() > config.post_max_azimuth as u16 
+                            {
+                                continue;
+                            }
+                            f(time, sample);
                         } else {
-                            // Truncated burst — stop gracefully.
                             break;
                         }
                     }
                 }
             }
             Err(e) => {
-                info!("Error reading bin {}: {:?}", bin_id, e);
+                info!("[comp] Error reading bin {}: {:?}", bin_id, e);
+                return Err(ComputeError::StorageAccess);
             }
         }
     }
+
+    Ok(())
 }

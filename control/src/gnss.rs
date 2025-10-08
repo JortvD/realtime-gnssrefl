@@ -2,17 +2,16 @@ use defmt::info;
 use embassy_rp::uart;
 use embassy_time::Instant;
 
-use crate::{nmea::{NMEAParser, NmeaBurst}, types::{Config, Nmealine}};
+use crate::{nmea::NmeaBurst, types::Nmealine};
 
 pub struct GNSSSensor {
     uart: uart::Uart<'static, uart::Async>,
-    pub parser: NMEAParser,
     awake: bool,
 }
 
 impl GNSSSensor {
-    pub fn new(uart: uart::Uart<'static, uart::Async>, config: Config) -> Self {
-        Self { uart, parser: NMEAParser::new(&config), awake: false }
+    pub fn new(uart: uart::Uart<'static, uart::Async>) -> Self {
+        Self { uart, awake: false }
     }
 
     pub async fn read_burst(&mut self) -> NmeaBurst {
@@ -73,10 +72,6 @@ impl GNSSSensor {
         nmeaburst.duration = Instant::now() - start;
 
         nmeaburst
-    }
-
-    pub fn is_awake(&self) -> bool {
-        self.awake
     }
 
     pub async fn sleep(&mut self) {

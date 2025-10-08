@@ -1,7 +1,9 @@
-use defmt::info;
 use heapless::{Vec, String};
 
 use crate::{realtime::RealTime, utils};
+
+// Control
+pub const MAX_SECTORS: usize = 128;
 
 // NMEA processing
 pub const NMEA_MAX_LINES: usize = 64;
@@ -44,6 +46,18 @@ pub struct Config {
     pub pre_max_elevation: u32,
     pub pre_min_azimuth: u32,
     pub pre_max_azimuth: u32,
+
+    pub post_min_elevation: u32,
+    pub post_max_elevation: u32,
+    pub post_min_azimuth: u32,
+    pub post_max_azimuth: u32,
+
+    pub min_relative_height: f32,
+    pub max_relative_height: f32,
+    pub relative_height_step_size: f32,
+
+    pub qc_min_elevation_range: u32,
+    pub qc_iqr_size: f32,
 
     pub sector_mid_times: Vec<u32, 24>,
 
@@ -91,6 +105,19 @@ impl Default for Config {
             pre_max_elevation: 30,
             pre_min_azimuth: 50,
             pre_max_azimuth: 150,
+
+            post_min_elevation: 10,
+            post_max_elevation: 30,
+            post_min_azimuth: 50,
+            post_max_azimuth: 150,
+
+            min_relative_height: 0.5,
+            max_relative_height: 10.0,
+            relative_height_step_size: 0.5,
+
+            qc_min_elevation_range: 10,
+            qc_iqr_size: 1.5,
+
             sector_mid_times: mid_times,
 
             bins_per_sector: 15,

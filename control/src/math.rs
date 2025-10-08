@@ -1,5 +1,3 @@
-#![no_std]
-
 use core::f32::consts::PI;
 
 /// Kahan compensated addition (f32).
@@ -97,7 +95,7 @@ fn pack_center_and_init<const CAP: usize>(
 /// - stores sin/cos tables as i16 fixed-point
 /// - drops unused packed time buffer
 #[inline(always)]
-pub fn lombscargle_no_std<const CAP: usize>(
+pub async fn lombscargle_no_std<const CAP: usize>(
     x: &[f32],
     y: &[f32],
     f0: f32,
@@ -195,6 +193,8 @@ pub fn lombscargle_no_std<const CAP: usize>(
                 }
             }
         }
+
+        yield_now().await;
     }
 
     m
@@ -381,6 +381,8 @@ pub fn polyfit_and_smooth_no_std(x: &[f32], y: &mut [f32]) -> usize {
 
 
 use core::cmp::Ordering;
+
+use embassy_futures::yield_now;
 
 #[inline]
 fn lt(a: f32, b: f32) -> bool {

@@ -1,6 +1,5 @@
 use core::str::Split;
 
-use defmt::info;
 use embassy_time::Duration;
 use heapless::Vec;
 use crate::{types::*, utils};
@@ -79,12 +78,16 @@ impl Burst {
 }
 
 pub struct NMEAParser {
-    config: Config,
+    config: Option<Config>,
 }
 
 impl NMEAParser {
-    pub fn new(config: &Config) -> Self {
-        Self { config: config.clone() }
+    pub fn new() -> Self {
+        Self { config: None }
+    }
+
+    pub fn new_from_config(config: &Config) -> Self {
+        Self { config: Some(config.clone()) }
     }
 
     pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst, add_date: bool) -> Burst {
@@ -260,9 +263,13 @@ impl NMEAParser {
             value <<= SNR_BITS;
             value += snr;
 
-            if elev < self.config.pre_min_elevation || elev > self.config.pre_max_elevation ||
-               azim < self.config.pre_min_azimuth || azim > self.config.pre_max_azimuth {
-                continue;
+            if let Some(config) = &self.config {
+                if  elev < config.pre_min_elevation || 
+                    elev > config.pre_max_elevation ||
+                    azim < config.pre_min_azimuth || 
+                    azim > config.pre_max_azimuth {
+                    continue;
+                }
             }
 
             new_values.push(value).ok();

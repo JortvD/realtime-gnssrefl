@@ -103,15 +103,11 @@ impl FlashStorage {
     }
 }
 
-pub struct BinStorage {
-    seconds_per_bin: u32
-}
+pub struct BinStorage {}
 
 impl BinStorage {
-    pub fn new(seconds_per_bin: u32) -> Self {
-        Self {
-            seconds_per_bin,
-        }
+    pub fn new() -> Self {
+        Self {}
     }
 
     pub fn get_container_id(&self, bin_id: u32) -> usize {
@@ -139,17 +135,18 @@ impl MeasurementStorage {
         MEASUREMENTS_CONTAINER_START
     }
 
-    pub fn store(&self, storage: &mut FlashStorage, location: u32, measurement: Measurement) {
+    pub fn store(&self, storage: &mut FlashStorage, location: u32, measurement: Measurement) -> Result<(), ()> {
         let data = measurement.to_bytes();
         let start_offset = location * MEASUREMENT_STORAGE_SIZE as u32;
         let end_offset = start_offset + MEASUREMENT_STORAGE_SIZE as u32;
         if end_offset as usize > CONTAINER_SIZE * BLOCK_SIZE {
             error!("Measurement location exceeds container size");
-            return;
+            return Err(());
         }
         // info!("Storing measurement at location {}, container {}, offset {}-{}", location, self.get_container_id(), start_offset, end_offset);
-        storage.partial_erase(self.get_container_id(), start_offset, end_offset).expect("Failed to erase measurement location");
-        storage.write(self.get_container_id(), start_offset as u32, &data).expect("Failed to write measurement");
+        storage.partial_erase(self.get_container_id(), start_offset, end_offset).map_err(|_| ())?;
+        storage.write(self.get_container_id(), start_offset as u32, &data).map_err(|_| ())?;
+        Ok(())
     }
 
     pub fn read(&self, storage: &mut FlashStorage, location: u32) -> Option<Measurement> {
@@ -160,7 +157,7 @@ impl MeasurementStorage {
         }
         // info!("Reading measurement at location {}, container {}, offset {}", location, self.get_container_id(), offset);
         let mut data = [0u8; MEASUREMENT_SIZE];
-        storage.read(self.get_container_id(), offset, &mut data).expect("Failed to read measurement");
+        storage.read(self.get_container_id(), offset, &mut data).ok()?;
 
         Some(Measurement::from_bytes(&data))
     }
