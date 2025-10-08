@@ -81,6 +81,7 @@ pub async fn task_comms(
 ) {
     loop {
         info!("[comm] waiting for request");
+        run_comms_test(&mut rockblock).await;
         let select = select(
             channel_req.receive(), 
             Timer::after_secs(u64::MAX)
@@ -103,6 +104,49 @@ pub async fn task_comms(
             }
         }
     }
+}
+
+async fn run_comms_test(rockblock: &mut RockBlock9704) {
+    info!("[comm] Turning on RockBlock for test");
+    rockblock.power_on().await;
+    if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
+        info!("[comm] RockBlock not ready to be checked, aborting comms test");
+        return;
+    }
+    info!("[comm] Checking RockBlock status for test");
+    rockblock.check_status().await;
+    if rockblock.status != crate::rockblock::RockBlock9704Status::Ready {
+        info!("[comm] RockBlock not ready, aborting comms test");
+        return;
+    }
+    info!("[comm] RockBlock ready, sending test message");
+
+    for _ in 0..5 {
+        let response = rockblock.get_constellation_state().await;
+        if let Some(response) = response {
+            info!("[comm] Get constellation response: {}, {}, body length {}", response.constellation_visible, response.signal_level, response.signal_bars);
+        } else {
+            info!("[comm] Get constellation message failed");
+        }
+        Timer::after_secs(5).await;
+    }
+
+    let mut body = [0u8; 256];
+    let hello = b"Wie t leest trekt een bak";
+    body[..hello.len()].copy_from_slice(hello);
+
+    let message = IMTMessage::new(
+        IMT_DEFAULT_TOPIC,
+        body,
+        hello.len() as u8,
+    );
+
+    rockblock.send_message(message).await;
+    info!("[comm] Test message sent");
+
+    info!("[comm] Turning off RockBlock after test");
+    rockblock.power_off().await;
+    info!("[comm] RockBlock powered off after test");
 }
 
 async fn dump_bin_storage(rockblock: &mut RockBlock9704, storage: &'static StorageType) {

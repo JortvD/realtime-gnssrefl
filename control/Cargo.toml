@@ -22,7 +22,7 @@ heapless = { version = "0.9.1", features = ["serde"] }
 libm = "0.2.15"
 panic-probe = {version = "1.0.0", features = ["print-defmt"]}
 static_cell = "2.1.1"
-serde-json-core = "0.6.0"
+serde-json-core = { version = "0.6.0", features = ["defmt"] }
 serde = { version = "1.0.228", default-features = false }
 crc16 = "0.4.0"
 base64 = { version = "0.22.1", default-features = false }

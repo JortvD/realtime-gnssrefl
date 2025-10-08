@@ -109,11 +109,11 @@ async fn main(spawner: Spawner) {
 
     // UART Rockblock
     let mut config_uart_rockblock = uart::Config::default();
-    config_uart_rockblock.baudrate = 921_600;
+    config_uart_rockblock.baudrate = 230_400;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let pin_power_enable = Output::new(p.PIN_10, Level::Low);
-    let pin_iridium_enable = Output::new(p.PIN_11, Level::Low);
-    let pin_iridium_status = gpio::Input::new(p.PIN_14, gpio::Pull::Up);
+    let pin_iridium_enable = Output::new(p.PIN_26, Level::Low);
+    let pin_iridium_status = gpio::Input::new(p.PIN_27, gpio::Pull::Up);
     let rockblock = RockBlock9704::new(
         uart_rockblock,
         pin_power_enable,
@@ -131,19 +131,19 @@ async fn main(spawner: Spawner) {
 
     info!("[main] initialized peripherals");
 
-    // Spawn core 0 tasks
-    spawner.spawn(task_measure(
-        &MEASURE_REQUEST_CHANNEL,
-        &MEASURE_RESPONSE_CHANNEL,
-        &STORAGE, 
-        gnss_sensor
-    )).unwrap();
+    // // Spawn core 0 tasks
+    // spawner.spawn(task_measure(
+    //     &MEASURE_REQUEST_CHANNEL,
+    //     &MEASURE_RESPONSE_CHANNEL,
+    //     &STORAGE, 
+    //     gnss_sensor
+    // )).unwrap();
        
-    spawner.spawn(task_compute(
-        &COMPUTE_REQUEST_CHANNEL, 
-        &COMPUTE_RESPONSE_CHANNEL, 
-        &STORAGE
-    )).unwrap();
+    // spawner.spawn(task_compute(
+    //     &COMPUTE_REQUEST_CHANNEL, 
+    //     &COMPUTE_RESPONSE_CHANNEL, 
+    //     &STORAGE
+    // )).unwrap();
 
     spawner.spawn(task_comms(
         &COMM_REQUEST_CHANNEL, 
@@ -152,14 +152,14 @@ async fn main(spawner: Spawner) {
         rockblock
     )).unwrap();
 
-    spawner.spawn(task_control(
-        &MEASURE_REQUEST_CHANNEL,
-        &COMPUTE_REQUEST_CHANNEL,
-        &COMM_REQUEST_CHANNEL,
-        &MEASURE_RESPONSE_CHANNEL,
-        &COMPUTE_RESPONSE_CHANNEL,
-        &COMM_RESPONSE_CHANNEL, 
-    )).unwrap();
+    // spawner.spawn(task_control(
+    //     &MEASURE_REQUEST_CHANNEL,
+    //     &COMPUTE_REQUEST_CHANNEL,
+    //     &COMM_REQUEST_CHANNEL,
+    //     &MEASURE_RESPONSE_CHANNEL,
+    //     &COMPUTE_RESPONSE_CHANNEL,
+    //     &COMM_RESPONSE_CHANNEL, 
+    // )).unwrap();
 
     spawner.spawn(led_blink(led)).unwrap();
     
