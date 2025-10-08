@@ -27,56 +27,58 @@ fn tweak_line(line: &str, t: chrono::DateTime<chrono::Utc>) -> String {
 }
 
 fn main() -> Result<()> {
-    // ==== tweakable options ====
-    let port_path = "/dev/ttyACM0";
-    let baud = 921_600;
-    let min_part_interval_ms: u64 = 100;
-    // Set offset in seconds from current UTC time, or parse a custom time string (e.g., "2024-06-01T12:34:56Z")
-    let mut time = chrono::DateTime::parse_from_rfc3339("2025-10-01T12:25:00Z")?.with_timezone(&Utc);
-    // ===========================
+    let d: f32 = 149820.722784;
+    println!("d: {}", d/2880.0);
+    // // ==== tweakable options ====
+    // let port_path = "/dev/ttyACM0";
+    // let baud = 921_600;
+    // let min_part_interval_ms: u64 = 100;
+    // // Set offset in seconds from current UTC time, or parse a custom time string (e.g., "2024-06-01T12:34:56Z")
+    // let mut time = chrono::DateTime::parse_from_rfc3339("2025-10-01T12:25:00Z")?.with_timezone(&Utc);
+    // // ===========================
 
-    let builder = serialport::new(port_path, baud)
-        .data_bits(DataBits::Eight)
-        .parity(Parity::None)
-        .stop_bits(StopBits::One)
-        .flow_control(FlowControl::None)
-        .timeout(Duration::from_millis(1000));
-    let mut port = builder.open()?;
+    // let builder = serialport::new(port_path, baud)
+    //     .data_bits(DataBits::Eight)
+    //     .parity(Parity::None)
+    //     .stop_bits(StopBits::One)
+    //     .flow_control(FlowControl::None)
+    //     .timeout(Duration::from_millis(1000));
+    // let mut port = builder.open()?;
 
-    let file = File::open("data/nmea.txt")?;
-    let lines: Vec<String> = BufReader::new(file).lines().collect::<Result<_, _>>()?;
+    // let file = File::open("data/nmea.txt")?;
+    // let lines: Vec<String> = BufReader::new(file).lines().collect::<Result<_, _>>()?;
 
-    // Split into parts (each part ends just before next $GNRMC)
-    let mut parts = Vec::new();
-    let mut cur = Vec::new();
-    for l in lines {
-        if l.starts_with("$GNRMC") || l.starts_with("$GPRMC") { if !cur.is_empty() { parts.push(std::mem::take(&mut cur)); } }
-        cur.push(l);
-    }
-    if !cur.is_empty() { parts.push(cur); }
+    // // Split into parts (each part ends just before next $GNRMC)
+    // let mut parts = Vec::new();
+    // let mut cur = Vec::new();
+    // for l in lines {
+    //     if l.starts_with("$GNRMC") || l.starts_with("$GPRMC") { if !cur.is_empty() { parts.push(std::mem::take(&mut cur)); } }
+    //     cur.push(l);
+    // }
+    // if !cur.is_empty() { parts.push(cur); }
 
-    loop {
-        for part in &parts {
-            let part_start = Instant::now();
-            for line in part {
-                // "Now" is base + elapsed since we started streaming
-                let out = tweak_line(line, time);
-                writeln!(port, "{}", out)?;
-            }
-            port.flush()?;
-            let elapsed = part_start.elapsed();
-            if elapsed < Duration::from_millis(min_part_interval_ms) {
-                println!(
-                    "[{}] Part sent in {} ms, sleeping {} ms",
-                    time.format("%Y-%m-%d %H:%M:%S%"),
-                    elapsed.as_millis(),
-                    (min_part_interval_ms as i128 - elapsed.as_millis() as i128)
-                );
-                sleep(Duration::from_millis(min_part_interval_ms) - elapsed);
-            }
-            // Advance the RMC date seamlessly if we loop; keeps dates moving forward
-            time = time + chrono::Duration::seconds(1);
-        }
-    }
+    // loop {
+    //     for part in &parts {
+    //         let part_start = Instant::now();
+    //         for line in part {
+    //             // "Now" is base + elapsed since we started streaming
+    //             let out = tweak_line(line, time);
+    //             writeln!(port, "{}", out)?;
+    //         }
+    //         port.flush()?;
+    //         let elapsed = part_start.elapsed();
+    //         if elapsed < Duration::from_millis(min_part_interval_ms) {
+    //             println!(
+    //                 "[{}] Part sent in {} ms, sleeping {} ms",
+    //                 time.format("%Y-%m-%d %H:%M:%S%"),
+    //                 elapsed.as_millis(),
+    //                 (min_part_interval_ms as i128 - elapsed.as_millis() as i128)
+    //             );
+    //             sleep(Duration::from_millis(min_part_interval_ms) - elapsed);
+    //         }
+    //         // Advance the RMC date seamlessly if we loop; keeps dates moving forward
+    //         time = time + chrono::Duration::seconds(1);
+    //     }
+    // }
     Ok(())
 }
