@@ -55,3 +55,14 @@ pub enum CommResMsg{
     },
     Fail
 }
+
+pub enum MonReqMsg{
+    GetBatVolt
+}
+
+pub enum MonResMsg{
+    BatVoltSuccess{
+        voltage: u32
+    },
+    BatVoltFail
+}

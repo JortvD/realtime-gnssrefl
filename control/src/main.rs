@@ -16,7 +16,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::Duration;
 use embassy_time::Instant;
 use embassy_time::Timer;
-use gpio::{Level, Output};
+use gpio::{Level, Output, Input, Pull};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
 use embassy_rp::peripherals::UART0;
@@ -24,6 +24,7 @@ use embassy_rp::peripherals::UART1;
 use embassy_sync::channel::Channel;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use static_cell::StaticCell;
+use embassy_rp::adc;
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -41,22 +42,29 @@ mod rockblock;
 mod realtime;
 mod scheduler;
 mod messages;
+mod battery;
+mod monitor;
 
+use crate::battery::Battery;
 use crate::comms::task_comms;
 use crate::compute::task_compute;
 use crate::control::task_control;
+use crate::messages::MonResMsg;
 use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
 use crate::gnss::GNSSSensor;
 use crate::measure::task_measure;
+use crate::monitor::task_monitor;
 use crate::rockblock::RockBlock9704;
 use crate::storage::FlashStorage;
 
 static MEASURE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, MeasureReqMsg, 8> = Channel::new();
 static COMPUTE_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, ComputeReqMsg, 8> = Channel::new();
 static COMM_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, CommReqMsg, 8> = Channel::new();
+static MONITOR_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, MonReqMsg, 8> = Channel::new();
 static MEASURE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MeasureResMsg, 8> = Channel::new();
 static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg, 8> = Channel::new();
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
+static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
 pub const GNSS_UART_BAUDRATE: u32 = 115_200;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
@@ -64,6 +72,7 @@ pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
     UART1_IRQ  => UARTInterruptHandler<UART1>;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 
@@ -109,6 +118,21 @@ async fn main(spawner: Spawner) {
     wdg.pause_on_debug(false);
     wdg.start(Duration::from_secs(3));
     
+    // Battery peripherals
+    let mut pin_bat_stat1 = Input::new(p.PIN_16, Pull::None);
+    let mut pin_bat_stat2 = Input::new(p.PIN_17, Pull::None);
+    let mut pin_bat_CE = Output::new(p.PIN_18, Level::Low);
+
+    let mut adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
+    let mut pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_28, Pull::None);
+
+    let battery = Battery::new(
+        pin_bat_stat1, 
+        pin_bat_stat2, 
+        pin_bat_CE, 
+        pin_bat_voltage, 
+        adc);
+
     // LED peripherals
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
@@ -199,6 +223,16 @@ async fn main(spawner: Spawner) {
 
     if result.is_err() {
         error!("Failed to spawn LED blink task: {}", result.unwrap_err());
+    }
+
+    let result = spawner.spawn(task_monitor(
+        &MONITOR_REQUEST_CHANNEL, 
+        &MONITOR_RESPONSE_CHANNEL, 
+        battery)
+    );
+
+    if result.is_err() {
+        error!("Failed to spawn Monitor task: {}", result.unwrap_err());
     }
     
     info!("[main] startup complete in {} ms", start.elapsed().as_millis());
