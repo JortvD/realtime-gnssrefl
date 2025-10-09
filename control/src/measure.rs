@@ -51,7 +51,10 @@ pub async fn task_measure(
                 if result.is_err() {
                     let error = result.err().unwrap();
                     info!("[meas] measurement for sector {} failed: {:?}", sector.get_measurement_index(), error);
-                    channel_res.send(MeasureResMsg::SectorFail { error }).await;
+                    channel_res.send(MeasureResMsg::SectorFail { 
+                        sector_uid: sector.get_uid(),
+                        error 
+                    }).await;
                 } else {
                     info!("[meas] measurement for sector {} completed successfully", sector.get_measurement_index());
                     channel_res.send(MeasureResMsg::SectorSuccess { 

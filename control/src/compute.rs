@@ -112,7 +112,7 @@ pub async fn task_compute(
                         channel_res.send(ComputeResMsg::Success { sector_uid: sector.get_uid() }).await;
                     },
                     Err(e) => {
-                        channel_res.send(ComputeResMsg::ComputeFail { error: e }).await;
+                        channel_res.send(ComputeResMsg::ComputeFail { sector_uid: sector.get_uid(), error: e }).await;
                     }
                 }
             }
@@ -164,6 +164,11 @@ async fn run_compute(
     let total_arcs: usize = queue.len(); 
 
     for (idx, arc) in queue.iter().enumerate() {
+        if idx >= 256 {
+            info!("[comp] reached max arcs to process (256), stopping");
+            break;
+        }
+
         let full_start = Instant::now();
         info!(
             "[comp][{:03}/{:03}] arc sat {}, {}..{}",
@@ -359,6 +364,7 @@ async fn run_compute(
     let rh_std = if num_used > 1 { sqrtf(rh_var_acc / (num_used as f32 - 1.0)) } else { 0.0 };
 
     let mut measurement = Measurement::new(
+        sector.get_uid(),
         queue.len() as u32, 
         sector.get_start_time(), 
         sector.get_end_time(), 

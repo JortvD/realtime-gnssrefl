@@ -66,7 +66,6 @@ bind_interrupts!(pub struct Irqs {
     UART1_IRQ  => UARTInterruptHandler<UART1>;
 });
 
-
 // Program metadata for `picotool info`.
 // This isn't needed, but it's recomended to have these minimal entries.
 #[unsafe(link_section = ".bi_entries")]

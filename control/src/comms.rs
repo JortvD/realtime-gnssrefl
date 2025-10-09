@@ -11,7 +11,11 @@ use crate::storage::MeasurementStorage;
 use crate::types::{Measurement, Sector, MAX_SECTORS, NUM_MEASUREMENTS};
 use crate::StorageType;
 
-pub struct MeasurementPacket { // 5 bytes
+const MEASUREMENT_PACKET_SIZE: usize = 6; // bytes
+const PACKET_HEADER_SIZE: usize = 4; // bytes
+
+pub struct MeasurementPacket {
+    uid: u8,
     relative_height_mean: u16,
     relative_height_std: u8,
     num_observations_used: u8,
@@ -19,8 +23,9 @@ pub struct MeasurementPacket { // 5 bytes
 }
 
 impl MeasurementPacket {
-    pub fn new(relative_height_mean: u16, relative_height_std: u8, num_observations_used: u8, num_observations_seen: u8) -> Self {
+    pub fn new(uid: u8, relative_height_mean: u16, relative_height_std: u8, num_observations_used: u8, num_observations_seen: u8) -> Self {
         Self {
+            uid,
             relative_height_mean,
             relative_height_std,
             num_observations_used,
@@ -28,12 +33,13 @@ impl MeasurementPacket {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 5] {
-        let mut data = [0u8; 5];
-        data[0..2].copy_from_slice(&self.relative_height_mean.to_le_bytes());
-        data[2] = self.relative_height_std;
-        data[3] = self.num_observations_used;
-        data[4] = self.num_observations_seen;
+    pub fn to_bytes(&self) -> [u8; MEASUREMENT_PACKET_SIZE] {
+        let mut data = [0u8; MEASUREMENT_PACKET_SIZE];
+        data[0] = self.uid;
+        data[1..3].copy_from_slice(&self.relative_height_mean.to_le_bytes());
+        data[3] = self.relative_height_std;
+        data[4] = self.num_observations_used;
+        data[5] = self.num_observations_seen;
         data
     }
 }
@@ -41,18 +47,22 @@ impl MeasurementPacket {
 const MAX_MEASUREMENT_PACKETS: usize = 10;
 
 pub struct Packet { // 5 + n * 5 bytes = 55
-    id_status: u16, // 13 bits id, 3 bits status
-    timestamp: u16,
     battery: u8,
+    temp: u8,
+    lat: u8,
+    lon: u8,
     measurements: Vec<MeasurementPacket, MAX_MEASUREMENT_PACKETS>,
 }
 
+const PACKET_SIZE: usize = PACKET_HEADER_SIZE + (MAX_MEASUREMENT_PACKETS * MEASUREMENT_PACKET_SIZE);
+
 impl Packet {
-    pub fn new(id: u16, status: u16, timestamp: u16, battery: u8) -> Self {
+    pub fn new(battery: u8, temp: u8, lat: u8, lon: u8) -> Self {
         Self {
-            id_status: (id & 0x1FFF) | ((status & 0x7) << 13),
-            timestamp,
             battery,
+            temp,
+            lat,
+            lon,
             measurements: Vec::new(),
         }
     }
@@ -61,12 +71,12 @@ impl Packet {
         self.measurements.push(measurement).map_err(|_| ())
     }
 
-    pub fn to_bytes(&self) -> Vec<u8, {5 * MAX_MEASUREMENT_PACKETS + 5}> {
-        let mut data = Vec::<u8, {5 * MAX_MEASUREMENT_PACKETS + 5}>::new(); // 55 bytes
-        data.extend_from_slice(&self.id_status.to_le_bytes()).ok();
-        data.push(self.timestamp as u8).ok();
-        data.push((self.timestamp >> 8) as u8).ok();
-        data.push(self.battery).ok();
+    pub fn to_bytes(&self) -> Vec<u8, PACKET_SIZE> {
+        let mut data = Vec::<u8, PACKET_SIZE>::new();
+        data.extend_from_slice(&self.battery.to_le_bytes()).ok();
+        data.extend_from_slice(&self.temp.to_le_bytes()).ok();
+        data.extend_from_slice(&self.lat.to_le_bytes()).ok();
+        data.extend_from_slice(&self.lon.to_le_bytes()).ok();
         for measurement in self.measurements.iter() {
             let meas_bytes = measurement.to_bytes();
             data.extend_from_slice(&meas_bytes).ok();
@@ -91,14 +101,24 @@ pub async fn task_comms(
         ).await;
         match select {
             Either::First(CommReqMsg::Send { sectors, config }) => {
-                let sector = sectors.get(0).expect("At least one sector should be present");
-                info!("[comm] starting communication for sector {}", sector.get_measurement_index());
-                let result = run_comms(&mut rockblock, storage, sector, config.num_send_measurements).await;
+                let mut uids: [u32; MAX_SECTORS] = [0; MAX_SECTORS];
+                let mut count = 0;
+                for s in sectors.iter() {
+                    uids[count] = s.get_uid();
+                    count += 1;
+                }
+                info!("[comm] starting communication for sectors {:?}", &uids[..count]);
+                let result = run_comms(&mut rockblock, storage, sectors, config.num_send_measurements).await;
                 if result.is_err() {
-                    info!("[comm] communication for sector {} failed", sector.get_measurement_index());
-                    channel_res.send(CommResMsg::Fail).await;
+                    info!("[comm] communication failed");
+                    channel_res.send(CommResMsg::Fail { 
+                        sector_uids: heapless::Vec::from_slice(&uids[..count]).unwrap(),
+                        error: result.unwrap_err() 
+                    }).await;
                 } else {
-                    channel_res.send(CommResMsg::Success { sector_uids: result.unwrap() }).await;
+                    channel_res.send(CommResMsg::Success { 
+                        sector_uids: heapless::Vec::from_slice(&uids[..count]).unwrap(),
+                    }).await;
                 }
             }
             Either::Second(_) => {}
@@ -117,9 +137,9 @@ pub enum CommsError {
 async fn run_comms(
     rockblock: &mut RockBlock9704,
     storage: &'static StorageType,
-    sector: &Sector,
+    sectors: Vec<Sector, MAX_SECTORS>,
     num_measurements: u32,
-) -> Result<Vec<u32, MAX_SECTORS>, CommsError> {
+) -> Result<(), CommsError> {
     info!("[comm] Turning on RockBlock");
     rockblock.power_on().await;
     if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
@@ -141,30 +161,30 @@ async fn run_comms(
         128
     );
 
-    let measurement_storage = MeasurementStorage::new();
-    let mut uids = Vec::<u32, MAX_SECTORS>::new();
-    uids.push(sector.get_uid()).ok();
+    let mut highest_uid = u32::MIN;
+    let mut highest_index = u32::MIN;
 
-    for i in 0..num_measurements {
-        let measurement: Option<Measurement>;
-        {
-            let mut storage_lock = storage.lock().await;
-            let storage = storage_lock.as_mut().ok_or(CommsError::StorageAccess)?;
-            measurement = measurement_storage.read(storage, (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32);
+    for sector in sectors.iter() {
+        if let Ok(measurement) = get_measurement_packet(storage, sector.get_measurement_index()).await {
+            if sector.get_uid() > highest_uid {
+                highest_uid = sector.get_uid();
+                highest_index = sector.get_measurement_index();
+            }
+            if packet.push(measurement).is_err() {
+                info!("[comm] Packet full, stopping adding measurements");
+                break;
+            }
         }
-        if measurement.is_none() {
-            info!("[comm] No measurement found at location {}, skipping", (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32);
-            continue;
+    }
+
+    for i in 1..(num_measurements - sectors.len() as u32 + 1) {
+        let index = highest_index - i % NUM_MEASUREMENTS as u32;
+        if let Ok(measurement) = get_measurement_packet(storage, index).await {
+            if packet.push(measurement).is_err() {
+                info!("[comm] Packet full, stopping adding measurements");
+                break;
+            }
         }
-        let measurement = measurement.unwrap();
-        info!("[comm] Read measurement at location {} with {} observations, mean {}, std {}", (sector.get_measurement_index() - i) % NUM_MEASUREMENTS as u32, measurement.observations.len(), measurement.mean, measurement.std);
-        let packet_measurement = MeasurementPacket::new(
-            mean_f32_to_u16(measurement.mean, 20.0),
-            std_f32_to_u8(measurement.std, 1.0),
-            measurement.observations.len() as u8,
-            measurement.num_seen as u8,
-        );
-        packet.push(packet_measurement).ok();
     }
 
     let data = packet.to_bytes();
@@ -192,7 +212,37 @@ async fn run_comms(
     rockblock.power_off().await;
     info!("[comm] RockBlock powered off");
 
-    Ok(uids)
+    Ok(())
+}
+
+async fn get_measurement_packet(storage: &'static StorageType, measurement_index: u32) -> Result<MeasurementPacket, CommsError> {
+    let measurement_storage = MeasurementStorage::new();
+    let measurement: Option<Measurement>;
+    {
+        let mut storage_lock = storage.lock().await;
+        let storage = storage_lock.as_mut().ok_or(CommsError::StorageAccess)?;
+        measurement = measurement_storage.read(storage, measurement_index);
+    }
+    if measurement.is_none() {
+        info!("[comm] Failed to get measurement {}, skipping", measurement_index);
+        return Err(CommsError::StorageAccess);
+    }
+    let measurement = measurement.unwrap();
+    let packet_measurement = MeasurementPacket::new(
+        (measurement.uid % 256) as u8,
+        mean_f32_to_u16(measurement.mean, 20.0),
+        std_f32_to_u8(measurement.std, 1.0),
+        measurement.observations.len() as u8,
+        measurement.num_seen as u8,
+    );
+    info!(
+        "[comm] Read measurement {} (with {} observations, mean {}, std {})", 
+        measurement_index,
+        packet_measurement.num_observations_used,
+        packet_measurement.relative_height_mean,
+        packet_measurement.relative_height_std
+    );
+    Ok(packet_measurement)
 }
 
 fn mean_f32_to_u16(value: f32, max: f32) -> u16 {
