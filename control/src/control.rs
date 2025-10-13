@@ -7,9 +7,10 @@ use heapless::Vec;
 use embassy_futures::select::{select4, Either4};
 
 use crate::realtime::RealTime;
-use crate::types::{Config, Sector, SectorState, MAX_SECTORS};
-use crate::scheduler::*;
 use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MonReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg, MonResMsg};
+use crate::storage::SectorStorage;
+use crate::types::{Config, Sector, SectorList, SectorState, MAX_SECTORS};
+use crate::{scheduler::*, StorageType};
 
 #[embassy_executor::task]
 pub async fn task_control(
@@ -21,6 +22,7 @@ pub async fn task_control(
     compute_response_channel: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
     comm_response_channel: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
     mon_response_channel: &'static Channel<CriticalSectionRawMutex, MonResMsg, 8>,
+    storage: &'static StorageType,
 ) {
     let config = Config::default();
     info!("[cont] starting");
@@ -35,8 +37,22 @@ pub async fn task_control(
 
     // List of tasks
     let mut realtime_available = false;
-    let mut sectors = SectorList::new();
+    let mut sectors: SectorList;
     let mut sleep_until: Option<u32> = None;
+    let sector_storage = SectorStorage::new();
+
+    {
+        let mut storage_lock = storage.lock().await;
+        let storage = storage_lock.as_mut().expect("Storage should be initialized");
+        let result = sector_storage.load(storage);
+        if let Ok(loaded_sectors) = result {
+            sectors = loaded_sectors;
+            info!("[cont] loaded {} sectors from storage", sectors.len());
+        } else {
+            sectors = SectorList::new();
+            info!("[cont] no stored sectors found, starting fresh");
+        }
+    }
 
     // TODO: Fill list_measured and list_computed from memory. 
     // This is for if there are still pending tasks from before power down
@@ -96,6 +112,9 @@ pub async fn task_control(
         }
 
         // Wait for responses
+        info!("[cont] saving sectors {} to storage", sectors.len());
+        save_sectors(storage, &sectors).await;
+
         info!("[cont] waiting for events");
 
         let mut timer = if let Some(st) = sleep_until {
@@ -138,16 +157,23 @@ pub async fn task_control(
                     },
                     MeasureResMsg::RefTimeFail {} => {
                         info!("[cont] getting ref time failed");
+                        // retry should already happen
                     }
-                    MeasureResMsg::SectorSuccess { sector_uid, deviation } => {
+                    MeasureResMsg::SectorSuccess { sector_uid, result } => {
                         info!("[cont] received sector measurement success from GNSS");
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMPUTE;
-                        realtime.update_time(deviation);
+                        realtime.update_time(result.deviation);
+                        sector.update_coords(result.lat, result.lon);
                     },
-                    MeasureResMsg::SectorFail { error } => {
+                    MeasureResMsg::SectorFail { sector_uid, error } => {
                         error!("Measurement failed: {:?}", error);
-                        // TODO: Retry logic
+                        // delete sector
+                        let sector_uid_to_delete = {
+                            let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
+                            sector.get_uid()
+                        };
+                        sectors.delete_uid(sector_uid_to_delete);
                     }
                 }
             }
@@ -158,9 +184,11 @@ pub async fn task_control(
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMMUNICATE;
                     }
-                    ComputeResMsg::ComputeFail { error } => {
+                    ComputeResMsg::ComputeFail { sector_uid, error } => {
                         error!("Computation failed: {}", error);
-                        // TODO: Retry logic
+                        // recompute
+                        let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
+                        sector.state = SectorState::TO_COMPUTE;
                     }
                 }
             }
@@ -172,71 +200,23 @@ pub async fn task_control(
                             sectors.delete_uid(sector_uid);
                         }
                     }
-                    _ => {}
+                    CommResMsg::Fail { sector_uids, error } => {
+                        error!("Communication failed: {:?}", error);
+                        // recommicate
+                        for &sector_uid in sector_uids.iter() {
+                            let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
+                            sector.state = SectorState::TO_COMMUNICATE;
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-
-struct SectorList {
-    sectors: Vec<Sector, MAX_SECTORS>,
-}
-
-impl SectorList {
-    pub fn new() -> Self {
-        Self {
-            sectors: Vec::new(),
-        }
-    }
-
-    pub fn push(&mut self, sector: Sector) {
-        self.sectors.push(sector).expect("Should fit");
-    }
-
-    pub fn delete_uid(&mut self, uid: u32) {
-        let index = self.sectors.iter().position(|s| s.get_uid() == uid);
-        if let Some(i) = index {
-            self.sectors.remove(i);
-        } else {
-            error!("Tried to delete sector with uid {} but it was not found", uid);
-        }
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> &mut Sector {
-        self.sectors.get_mut(index).expect("Only use after getting id directly")
-    }
-
-    pub fn get(&self, index: usize) -> &Sector {
-        self.sectors.get(index).expect("Only use after getting id directly")
-    }
-
-    pub fn get_mut_uid(&mut self, uid: u32) -> Option<&mut Sector> {
-        for sector in self.sectors.iter_mut() {
-            if sector.get_uid() == uid {
-                return Some(sector);
-            }
-        }
-        None
-    }
-
-    pub fn get_idx_for_state(&self, state: SectorState) -> Option<usize> {
-        for (i, sector) in self.sectors.iter().enumerate() {
-            if sector.state == state {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    pub fn get_idxs_for_state(&self, state: SectorState) -> Vec<usize, MAX_SECTORS> {
-        let mut indices = Vec::<usize, MAX_SECTORS>::new();
-        for (i, sector) in self.sectors.iter().enumerate() {
-            if sector.state == state {
-                indices.push(i).expect("Should fit");
-            }
-        }
-        indices
-    }
+pub async fn save_sectors(storage: &'static StorageType, sectors: &SectorList) {
+    let mut storage_lock = storage.lock().await;
+    let storage = storage_lock.as_mut().expect("Storage should be initialized");
+    let sector_storage = SectorStorage::new();
+    sector_storage.save(storage, sectors).expect("Should save sectors");
 }

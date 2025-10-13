@@ -40,6 +40,8 @@ impl NmeaBurst {
 
 pub struct Burst {
     pub time: u32,
+    pub lat: f32,
+    pub lon: f32,
     pub date: Option<u32>,
     pub num: u32,
     pub samples: Vec<Sample, BURST_SAT_SIZE>,
@@ -49,6 +51,8 @@ impl Burst {
     pub fn new() -> Self {
         Self {
             time: 0,
+            lat: 0.0,
+            lon: 0.0,
             date: None,
             num: 0,
             samples: Vec::new(),
@@ -91,8 +95,8 @@ impl NMEAParser {
     }
 
     pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst, add_date: bool) -> Burst {
-        let mut current_gps_time = u32::MAX;
         let mut burst = Burst::new();
+        burst.time = u32::MAX;
         let mut num: u32 = 0;
 
         burst.push(0).ok();
@@ -107,9 +111,13 @@ impl NMEAParser {
             };
 
             if self.is_command(command, "GGA") {
-                current_gps_time = match self.parse_gga(it) {
-                    Some(t) => t,
-                    None => current_gps_time,
+                match self.parse_gga(it) {
+                    Some((t, lat, lon)) => {
+                        burst.lat = lat;
+                        burst.lon = lon;
+                        burst.time = t;
+                    },
+                    None => continue,
                 }
             }
             else if self.is_command(command, "GSV") {
@@ -120,11 +128,10 @@ impl NMEAParser {
             }
         }
 
-        let mut header = current_gps_time;
+        let mut header = burst.time;
         header <<= NUM_BITS;
         header += num;
         burst.samples[0] = header;
-        burst.time = current_gps_time;
         burst.num = num;
 
         burst
@@ -148,13 +155,21 @@ impl NMEAParser {
         Some(utils::days_from_civil(year as i32, month as u32, day as u32) as u32)
     }
 
-    fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {
+    fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<(u32, f32, f32)> {
         let time_str = it.next()?;
         let hours = time_str[0..2].parse::<u32>().ok()?;
         let minutes = time_str[2..4].parse::<u32>().ok()?;
         let seconds = time_str[4..6].parse::<u32>().ok()?;
 
-        Some(hours * 3600 + minutes * 60 + seconds)
+        let lat_str = it.next()?;
+        let northsouth_str = it.next()?;
+        let lon_str = it.next()?;
+        let eastwest_str = it.next()?;
+
+        let lat = utils::parse_lat(lat_str, northsouth_str)?;
+        let lon = utils::parse_lon(lon_str, eastwest_str)?;
+
+        Some((hours * 3600 + minutes * 60 + seconds, lat, lon))
     }
 
     fn command_to_network(&mut self, command: &str) -> Option<u32> {
@@ -266,8 +281,12 @@ impl NMEAParser {
             if let Some(config) = &self.config {
                 if  elev < config.pre_min_elevation || 
                     elev > config.pre_max_elevation ||
-                    azim < config.pre_min_azimuth || 
-                    azim > config.pre_max_azimuth {
+                    (config.pre_min_elevation > config.pre_max_elevation 
+                        && (azim < config.pre_min_azimuth || 
+                        azim > config.pre_max_azimuth)) ||
+                    (config.pre_min_elevation <= config.pre_max_elevation 
+                        && (azim < config.pre_min_azimuth && 
+                        azim > config.pre_max_azimuth)) {
                     continue;
                 }
             }

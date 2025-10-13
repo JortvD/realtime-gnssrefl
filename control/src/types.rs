@@ -1,3 +1,4 @@
+use defmt::{error, info, Format};
 use heapless::{Vec, String};
 
 use crate::{realtime::RealTime, utils};
@@ -28,6 +29,7 @@ pub const BINS_CONTAINER_START: usize = 0;
 // 50: measurements (1 container)
 pub const NUM_MEASUREMENTS: usize = NUM_CONTAINER_BLOCKS;
 pub const MEASUREMENTS_CONTAINER_START: usize = 50;
+pub const SECTOR_CONTAINER_START: usize = 51;
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
 pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin (4 minutes)
@@ -128,7 +130,131 @@ impl Default for Config {
     }
 }
 
-# [derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub const SECTOR_LIST_HEADER_SIZE: usize = 4 + 4;
+pub const SECTOR_LIST_SIZE: usize = SECTOR_LIST_HEADER_SIZE + MAX_SECTORS * SECTOR_SIZE;
+
+pub struct SectorList {
+    sectors: Vec<Sector, MAX_SECTORS>,
+}
+
+impl SectorList {
+    pub fn new() -> Self {
+        Self {
+            sectors: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.sectors.len()
+    }
+
+    pub fn iter(&self) -> core::slice::Iter<'_, Sector> {
+        self.sectors.iter()
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let mut sectors = Vec::<Sector, MAX_SECTORS>::new();
+        if &data[0..4] != b"SECT" {
+            return None;
+        }
+        let num_sectors = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        for i in 0..num_sectors {
+            let start = SECTOR_LIST_HEADER_SIZE + i as usize * SECTOR_SIZE;
+            let end = start + SECTOR_SIZE;
+            let mut sector = Sector::from_byes(&data[start..end]);
+
+            match sector.state {
+                SectorState::AWAITING | SectorState::TO_MEASURE | SectorState::MEASURING => {
+                    info!("[sect] loaded sector {} in state {:?}, deleting", sector.get_uid(), sector.state);
+                    continue;
+                }
+                SectorState::COMPUTING => {
+                    sector.state = SectorState::TO_COMPUTE;
+                    info!("[sect] loaded sector {} in state {:?}, setting to TO_COMPUTE", sector.get_uid(), sector.state);
+                }
+                SectorState::COMMUNICATING => {
+                    sector.state = SectorState::TO_COMMUNICATE;
+                    info!("[sect] loaded sector {} in state {:?}, setting to TO_COMMUNICATE", sector.get_uid(), sector.state);
+                }
+                SectorState::DONE => {
+                    info!("[sect] loaded sector {} in state {:?}, deleteing", sector.get_uid(), sector.state);
+                    continue;
+                }
+                _ => { /* keep state as is */ }
+            }
+
+            sectors.push(sector).expect("Should fit");
+        }
+        Some(Self {
+            sectors,
+        })
+    }
+
+    pub fn to_bytes(&self) -> [u8; SECTOR_LIST_SIZE] {
+        let mut data = [0u8; SECTOR_LIST_SIZE];
+        let num_sectors = self.sectors.len() as u32;
+        data[0..4].copy_from_slice("SECT".as_bytes());
+        data[4..8].copy_from_slice(&num_sectors.to_le_bytes());
+        for (i, sector) in self.sectors.iter().enumerate() {
+            let sector_bytes = sector.to_bytes();
+            let start = SECTOR_LIST_HEADER_SIZE + i * SECTOR_SIZE;
+            let end = start + SECTOR_SIZE;
+            data[start..end].copy_from_slice(&sector_bytes);
+        }
+        data
+    }
+
+    pub fn push(&mut self, sector: Sector) {
+        self.sectors.push(sector).expect("Should fit");
+    }
+
+    pub fn delete_uid(&mut self, uid: u32) {
+        let index = self.sectors.iter().position(|s| s.get_uid() == uid);
+        if let Some(i) = index {
+            self.sectors.remove(i);
+        } else {
+            error!("Tried to delete sector with uid {} but it was not found", uid);
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> &mut Sector {
+        self.sectors.get_mut(index).expect("Only use after getting id directly")
+    }
+
+    pub fn get(&self, index: usize) -> &Sector {
+        self.sectors.get(index).expect("Only use after getting id directly")
+    }
+
+    pub fn get_mut_uid(&mut self, uid: u32) -> Option<&mut Sector> {
+        for sector in self.sectors.iter_mut() {
+            if sector.get_uid() == uid {
+                return Some(sector);
+            }
+        }
+        None
+    }
+
+    pub fn get_idx_for_state(&self, state: SectorState) -> Option<usize> {
+        for (i, sector) in self.sectors.iter().enumerate() {
+            if sector.state == state {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn get_idxs_for_state(&self, state: SectorState) -> Vec<usize, MAX_SECTORS> {
+        let mut indices = Vec::<usize, MAX_SECTORS>::new();
+        for (i, sector) in self.sectors.iter().enumerate() {
+            if sector.state == state {
+                indices.push(i).expect("Should fit");
+            }
+        }
+        indices
+    }
+}
+
+# [derive(Clone, Copy, Debug, PartialEq, Eq, Format)]
 pub enum SectorState {
     AWAITING,
     TO_MEASURE,
@@ -139,6 +265,8 @@ pub enum SectorState {
     COMMUNICATING,
     DONE
 }
+
+pub const SECTOR_SIZE: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct Sector {
@@ -152,6 +280,9 @@ pub struct Sector {
 
     seconds_per_bin: u32,
     pub state: SectorState,
+
+    lat: f32,
+    lon: f32,
 }
 
 impl Sector {
@@ -165,8 +296,75 @@ impl Sector {
             n_bins,
             seconds_per_bin,
             state,
+            lat: 0.0,
+            lon: 0.0,
         }
     }
+
+    pub fn to_bytes(&self) -> [u8; SECTOR_SIZE] {
+        let mut data = [0u8; SECTOR_SIZE];
+        data[0..4].copy_from_slice(&self.uid.to_le_bytes());
+        data[4..8].copy_from_slice(&self.midpoint_index.to_le_bytes());
+        data[8..12].copy_from_slice(&self.measurement_index.to_le_bytes());
+        data[12..16].copy_from_slice(&self.start_bin_index.to_le_bytes());
+        data[16..20].copy_from_slice(&self.start_time.to_le_bytes());
+        data[20..24].copy_from_slice(&self.n_bins.to_le_bytes());
+        data[24..28].copy_from_slice(&self.seconds_per_bin.to_le_bytes());
+        data[28] = match self.state {
+            SectorState::AWAITING => 0,
+            SectorState::TO_MEASURE => 1,
+            SectorState::MEASURING => 2,
+            SectorState::TO_COMPUTE => 3,
+            SectorState::COMPUTING => 4,
+            SectorState::TO_COMMUNICATE => 5,
+            SectorState::COMMUNICATING => 6,
+            SectorState::DONE => 7,
+        };
+        data[29..33].copy_from_slice(&self.lat.to_le_bytes());
+        data[33..37].copy_from_slice(&self.lon.to_le_bytes());
+        data
+    }
+
+    pub fn from_byes(data: &[u8]) -> Self {
+        let uid = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        let midpoint_index = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let measurement_index = u32::from_le_bytes(data[8..12].try_into().unwrap());
+        let start_bin_index = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        let start_time = u32::from_le_bytes(data[16..20].try_into().unwrap());
+        let n_bins = u32::from_le_bytes(data[20..24].try_into().unwrap());
+        let seconds_per_bin = u32::from_le_bytes(data[24..28].try_into().unwrap());
+        let state = match data[28] {
+            0 => SectorState::AWAITING,
+            1 => SectorState::TO_MEASURE,
+            2 => SectorState::MEASURING,
+            3 => SectorState::TO_COMPUTE,
+            4 => SectorState::COMPUTING,
+            5 => SectorState::TO_COMMUNICATE,
+            6 => SectorState::COMMUNICATING,
+            7 => SectorState::DONE,
+            _ => SectorState::AWAITING,
+        };
+        let lat = f32::from_le_bytes(data[29..33].try_into().unwrap());
+        let lon = f32::from_le_bytes(data[33..37].try_into().unwrap());
+        Self {
+            uid,
+            midpoint_index,
+            measurement_index,
+            start_bin_index,
+            start_time,
+            n_bins,
+            seconds_per_bin,
+            state,
+            lat,
+            lon,
+        }
+    }
+
+    pub fn update_coords(&mut self, lat: f32, lon: f32) {
+        self.lat = lat;
+        self.lon = lon;
+    }
+
     pub fn get_uid(&self) -> u32 {
         self.uid
     }
@@ -189,6 +387,14 @@ impl Sector {
 
     pub fn get_end_time(&self) -> u32 {
         self.start_time + self.n_bins * self.seconds_per_bin
+    }
+
+    pub fn get_lat(&self) -> f32 {
+        self.lat
+    }
+
+    pub fn get_lon(&self) -> f32 {
+        self.lon
     }
 
     pub fn get_bins(&self) -> Vec<u32, 128> {
@@ -221,30 +427,35 @@ impl Sector {
 
 pub const MAX_MEASUREMENT_OBSERVATIONS: usize = 128;
 
-pub const MEASUREMENT_HEADER_SIZE: usize = 20;
+pub const MEASUREMENT_HEADER_SIZE: usize = 32;
 pub const OBSERVATION_SIZE: usize = 28;
 
 pub const MEASUREMENT_SIZE: usize = MEASUREMENT_HEADER_SIZE + (OBSERVATION_SIZE * MAX_MEASUREMENT_OBSERVATIONS);
 
 pub struct Measurement {
+    pub uid: u32,
     pub num_seen: u32,
     pub observations: Vec<Observation, MAX_MEASUREMENT_OBSERVATIONS>,
     pub start_time: u32,
     pub end_time: u32,
     pub mean: f32,
     pub std: f32,
+    pub lat: f32,
+    pub lon: f32,
 }
 
-
 impl Measurement {
-    pub fn new(num_seen: u32, start_time: u32, end_time: u32, mean: f32, std: f32) -> Self {
+    pub fn new(uid: u32, num_seen: u32, start_time: u32, end_time: u32, mean: f32, std: f32, lat: f32, lon: f32) -> Self {
         Self {
+            uid,
             num_seen,
             observations: Vec::new(),
             start_time,
             end_time,
             mean,
             std,
+            lat,
+            lon,
         }
     }
 
@@ -254,6 +465,9 @@ impl Measurement {
         let num_seen = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let mean = f32::from_le_bytes([data[12], data[13], data[14], data[15]]);
         let std = f32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+        let uid = f32::from_le_bytes([data[20], data[21], data[22], data[23]]) as u32;
+        let lat = f32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        let lon = f32::from_le_bytes([data[28], data[29], data[30], data[31]]);
         // info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
         let mut observations = Vec::<Observation, MAX_MEASUREMENT_OBSERVATIONS>::new();
 
@@ -267,12 +481,15 @@ impl Measurement {
         }
 
         Self {
+            uid,
             num_seen,
             observations,
             start_time,
             end_time,
             mean,
             std,
+            lat,
+            lon,
         }
     }
 
@@ -287,6 +504,9 @@ impl Measurement {
         data[8..12].copy_from_slice(&self.num_seen.to_le_bytes());
         data[12..16].copy_from_slice(&self.mean.to_le_bytes());
         data[16..20].copy_from_slice(&self.std.to_le_bytes());
+        data[20..24].copy_from_slice(&(self.uid as f32).to_le_bytes());
+        data[24..28].copy_from_slice(&self.lat.to_le_bytes());
+        data[28..32].copy_from_slice(&self.lon.to_le_bytes());
         // info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
 
         for (i, obs) in self.observations.iter().enumerate() {

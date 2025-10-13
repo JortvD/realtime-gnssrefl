@@ -10,6 +10,7 @@ use embassy_executor::Spawner;
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
+use embassy_rp::gpio::Input;
 use embassy_rp::uart;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::mutex::Mutex;
@@ -44,6 +45,7 @@ mod scheduler;
 mod messages;
 mod battery;
 mod monitor;
+mod dump;
 
 use crate::battery::Battery;
 use crate::comms::task_comms;
@@ -73,7 +75,6 @@ bind_interrupts!(pub struct Irqs {
     UART1_IRQ  => UARTInterruptHandler<UART1>;
     ADC_IRQ_FIFO => adc::InterruptHandler;
 });
-
 
 // Program metadata for `picotool info`.
 // This isn't needed, but it's recomended to have these minimal entries.
@@ -153,6 +154,9 @@ async fn main(spawner: Spawner) {
         pin_iridium_status
     );
 
+    // Dump pheripheral
+    let dump_pin = Input::new(p.PIN_15, gpio::Pull::Up);
+
     // Storage peripheral
     let storage = FlashStorage::new(p.FLASH, false);
     {
@@ -168,6 +172,15 @@ async fn main(spawner: Spawner) {
     let result = spawner.spawn(watchdog_feeder(wdg));
     if result.is_err() {
         error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
+    }
+
+    if dump_pin.is_high() {
+        info!("[main] dump pin is high, dumping storage and halting");
+        Timer::after_millis(500).await;
+        let start = Instant::now();
+        dump::dump(&STORAGE).await;
+        info!("[main] dump complete in {} ms, halting", start.elapsed().as_millis());
+        return;
     }
 
     info!("[main] spawning tasks");
@@ -211,7 +224,8 @@ async fn main(spawner: Spawner) {
         &MEASURE_RESPONSE_CHANNEL,
         &COMPUTE_RESPONSE_CHANNEL,
         &COMM_RESPONSE_CHANNEL, 
-        &MONITOR_RESPONSE_CHANNEL
+        &MONITOR_RESPONSE_CHANNEL,
+        &STORAGE,
     ));
 
     if result.is_err() {
@@ -257,3 +271,4 @@ async fn watchdog_feeder(wdg: &'static mut Watchdog) {
         wdg.feed();
     }
 }
+

@@ -70,3 +70,41 @@ pub fn date_to_str(days: u32) -> String<11> {
     write!(date_str, "{:02}-{:02}-{:04}", day, month, year).unwrap();
     date_str
 }
+
+pub fn parse_lat(lat_str: &str, northsouth_str: &str) -> Option<f32> {
+    if lat_str.len() < 4 || northsouth_str.len() != 1 {
+        return None;
+    }
+
+    let degrees = lat_str[0..2].parse::<f32>().ok()?;
+    let minutes = lat_str[2..].parse::<f32>().ok()?;
+
+    let mut lat = degrees + (minutes / 60.0);
+
+    if northsouth_str == "S" {
+        lat = -lat;
+    } else if northsouth_str != "N" {
+        return None;
+    }
+
+    Some(lat)
+}
+
+pub fn parse_lon(lon_str: &str, eastwest_str: &str) -> Option<f32> {
+    if lon_str.len() < 5 || eastwest_str.len() != 1 {
+        return None;
+    }
+
+    let degrees = lon_str[0..3].parse::<f32>().ok()?;
+    let minutes = lon_str[3..].parse::<f32>().ok()?;
+
+    let mut lon = degrees + (minutes / 60.0);
+
+    if eastwest_str == "W" {
+        lon = -lon;
+    } else if eastwest_str != "E" {
+        return None;
+    }
+
+    Some(lon)
+}
