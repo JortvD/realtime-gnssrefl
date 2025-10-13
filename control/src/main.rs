@@ -49,8 +49,7 @@ use crate::battery::Battery;
 use crate::comms::task_comms;
 use crate::compute::task_compute;
 use crate::control::task_control;
-use crate::messages::MonResMsg;
-use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
+use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MonReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg, MonResMsg};
 use crate::gnss::GNSSSensor;
 use crate::measure::task_measure;
 use crate::monitor::task_monitor;
@@ -119,12 +118,12 @@ async fn main(spawner: Spawner) {
     wdg.start(Duration::from_secs(3));
     
     // Battery peripherals
-    let mut pin_bat_stat1 = Input::new(p.PIN_16, Pull::None);
-    let mut pin_bat_stat2 = Input::new(p.PIN_17, Pull::None);
-    let mut pin_bat_CE = Output::new(p.PIN_18, Level::Low);
+    let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
+    let pin_bat_stat2 = Input::new(p.PIN_21, Pull::None);
+    let pin_bat_CE = Output::new(p.PIN_20, Level::Low);
 
-    let mut adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
-    let mut pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_28, Pull::None);
+    let adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
+    let pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_26, Pull::None);
 
     let battery = Battery::new(
         pin_bat_stat1, 
@@ -139,19 +138,17 @@ async fn main(spawner: Spawner) {
     // GNSS peripherals
     let mut gnss_uart_config = uart::Config::default();
     gnss_uart_config.baudrate = GNSS_UART_BAUDRATE;
-    let gnss_uart = uart::Uart::new(p.UART0, p.PIN_12, p.PIN_13, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
+    let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
     let mut gnss_sensor = GNSSSensor::new(gnss_uart);
 
     // Rockblock pheripherals
     let mut config_uart_rockblock = uart::Config::default();
     config_uart_rockblock.baudrate = ROCKBLOCK_UART_BAUDRATE;
-    let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
-    let pin_power_enable = Output::new(p.PIN_10, Level::Low);
-    let pin_iridium_enable = Output::new(p.PIN_26, Level::Low);
-    let pin_iridium_status = gpio::Input::new(p.PIN_27, gpio::Pull::Up);
+    let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_4, p.PIN_5, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
+    let pin_iridium_enable = Output::new(p.PIN_7, Level::Low);
+    let pin_iridium_status = gpio::Input::new(p.PIN_6, gpio::Pull::Up);
     let rockblock = RockBlock9704::new(
         uart_rockblock,
-        pin_power_enable,
         pin_iridium_enable,
         pin_iridium_status
     );
@@ -210,9 +207,11 @@ async fn main(spawner: Spawner) {
         &MEASURE_REQUEST_CHANNEL,
         &COMPUTE_REQUEST_CHANNEL,
         &COMM_REQUEST_CHANNEL,
+        &MONITOR_REQUEST_CHANNEL,
         &MEASURE_RESPONSE_CHANNEL,
         &COMPUTE_RESPONSE_CHANNEL,
         &COMM_RESPONSE_CHANNEL, 
+        &MONITOR_RESPONSE_CHANNEL
     ));
 
     if result.is_err() {

@@ -32,7 +32,12 @@ impl Battery {
         }
     }
 
-    pub async fn get_battery_voltage(self) -> Result<u16, adc::Error> {
-        self.adc.read(self.pin_voltage).await;
+    pub async fn get_battery_voltage(&mut self) -> Result<u32, adc::Error> {
+        let raw = self.adc.read(&mut self.pin_voltage).await?;
+        // Convert to mV (assuming 3.3V reference, 12-bit ADC)
+        let voltage_mv = raw as f32* 3300.0 / 4096.0;
+        // Compensate for 1:1 voltage divider
+        Ok((voltage_mv * 2.0) as u32)
     }
+
 }
