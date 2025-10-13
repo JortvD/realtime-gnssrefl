@@ -111,6 +111,10 @@ impl GNSSSensor {
             return;
         }
 
+        let command = self.rxm_pmreq(0, false, true, true, false, false, false).await;
+
+        self.send_ubx(command).await;
+
         info!("[meas] GNSS put to sleep");
         self.awake = false;
     }
@@ -119,6 +123,13 @@ impl GNSSSensor {
         if self.awake {
             info!("[meas] GNSS already awake");
             return;
+        }
+
+        match self.uart.write(b"\r\n").await {
+            Ok(_) => {}
+            Err(e) => {
+                info!("[meas] Error waking GNSS: {}", e);
+            }
         }
 
         info!("[meas] GNSS woke up");
