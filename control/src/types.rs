@@ -280,6 +280,9 @@ pub struct Sector {
 
     seconds_per_bin: u32,
     pub state: SectorState,
+
+    lat: f32,
+    lon: f32,
 }
 
 impl Sector {
@@ -293,6 +296,8 @@ impl Sector {
             n_bins,
             seconds_per_bin,
             state,
+            lat: 0.0,
+            lon: 0.0,
         }
     }
 
@@ -315,6 +320,8 @@ impl Sector {
             SectorState::COMMUNICATING => 6,
             SectorState::DONE => 7,
         };
+        data[29..33].copy_from_slice(&self.lat.to_le_bytes());
+        data[33..37].copy_from_slice(&self.lon.to_le_bytes());
         data
     }
 
@@ -337,6 +344,8 @@ impl Sector {
             7 => SectorState::DONE,
             _ => SectorState::AWAITING,
         };
+        let lat = f32::from_le_bytes(data[29..33].try_into().unwrap());
+        let lon = f32::from_le_bytes(data[33..37].try_into().unwrap());
         Self {
             uid,
             midpoint_index,
@@ -346,7 +355,14 @@ impl Sector {
             n_bins,
             seconds_per_bin,
             state,
+            lat,
+            lon,
         }
+    }
+
+    pub fn update_coords(&mut self, lat: f32, lon: f32) {
+        self.lat = lat;
+        self.lon = lon;
     }
 
     pub fn get_uid(&self) -> u32 {
@@ -371,6 +387,14 @@ impl Sector {
 
     pub fn get_end_time(&self) -> u32 {
         self.start_time + self.n_bins * self.seconds_per_bin
+    }
+
+    pub fn get_lat(&self) -> f32 {
+        self.lat
+    }
+
+    pub fn get_lon(&self) -> f32 {
+        self.lon
     }
 
     pub fn get_bins(&self) -> Vec<u32, 128> {
@@ -403,7 +427,7 @@ impl Sector {
 
 pub const MAX_MEASUREMENT_OBSERVATIONS: usize = 128;
 
-pub const MEASUREMENT_HEADER_SIZE: usize = 24;
+pub const MEASUREMENT_HEADER_SIZE: usize = 32;
 pub const OBSERVATION_SIZE: usize = 28;
 
 pub const MEASUREMENT_SIZE: usize = MEASUREMENT_HEADER_SIZE + (OBSERVATION_SIZE * MAX_MEASUREMENT_OBSERVATIONS);
@@ -416,11 +440,12 @@ pub struct Measurement {
     pub end_time: u32,
     pub mean: f32,
     pub std: f32,
+    pub lat: f32,
+    pub lon: f32,
 }
 
-
 impl Measurement {
-    pub fn new(uid: u32, num_seen: u32, start_time: u32, end_time: u32, mean: f32, std: f32) -> Self {
+    pub fn new(uid: u32, num_seen: u32, start_time: u32, end_time: u32, mean: f32, std: f32, lat: f32, lon: f32) -> Self {
         Self {
             uid,
             num_seen,
@@ -429,6 +454,8 @@ impl Measurement {
             end_time,
             mean,
             std,
+            lat,
+            lon,
         }
     }
 
@@ -439,6 +466,8 @@ impl Measurement {
         let mean = f32::from_le_bytes([data[12], data[13], data[14], data[15]]);
         let std = f32::from_le_bytes([data[16], data[17], data[18], data[19]]);
         let uid = f32::from_le_bytes([data[20], data[21], data[22], data[23]]) as u32;
+        let lat = f32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        let lon = f32::from_le_bytes([data[28], data[29], data[30], data[31]]);
         // info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
         let mut observations = Vec::<Observation, MAX_MEASUREMENT_OBSERVATIONS>::new();
 
@@ -459,6 +488,8 @@ impl Measurement {
             end_time,
             mean,
             std,
+            lat,
+            lon,
         }
     }
 
@@ -474,6 +505,8 @@ impl Measurement {
         data[12..16].copy_from_slice(&self.mean.to_le_bytes());
         data[16..20].copy_from_slice(&self.std.to_le_bytes());
         data[20..24].copy_from_slice(&(self.uid as f32).to_le_bytes());
+        data[24..28].copy_from_slice(&self.lat.to_le_bytes());
+        data[28..32].copy_from_slice(&self.lon.to_le_bytes());
         // info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
 
         for (i, obs) in self.observations.iter().enumerate() {

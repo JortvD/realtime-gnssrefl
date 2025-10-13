@@ -369,7 +369,9 @@ async fn run_compute(
         sector.get_start_time(), 
         sector.get_end_time(), 
         rh_mean, 
-        rh_std
+        rh_std,
+        sector.get_lat(),
+        sector.get_lon(),
     );
 
     for observation in observations {

@@ -147,11 +147,12 @@ pub async fn task_control(
                         info!("[cont] getting ref time failed");
                         // retry should already happen
                     }
-                    MeasureResMsg::SectorSuccess { sector_uid, deviation } => {
+                    MeasureResMsg::SectorSuccess { sector_uid, result } => {
                         info!("[cont] received sector measurement success from GNSS");
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMPUTE;
-                        realtime.update_time(deviation);
+                        realtime.update_time(result.deviation);
+                        sector.update_coords(result.lat, result.lon);
                     },
                     MeasureResMsg::SectorFail { sector_uid, error } => {
                         error!("Measurement failed: {:?}", error);

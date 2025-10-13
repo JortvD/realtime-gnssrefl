@@ -10,10 +10,10 @@ pub async fn dump(storage: &'static StorageType) {
     let sector_storage = SectorStorage::new();
     let sectors = sector_storage.load(storage);
     if let Ok(sectors) = sectors {
-        info!("SECTOR:idx, uid, state, midpoint_idx, measurement_idx, start_bin_idx, start_time");
+        info!("SECTOR:idx, uid, state, midpoint_idx, measurement_idx, start_bin_idx, start_time, lat, lon");
         for (i, sector) in sectors.iter().enumerate() {
             info!(
-                "SECTOR:{}, {}, {}, {}, {}, {}, {}", 
+                "SECTOR:{}, {}, {}, {}, {}, {}, {}, {}, {}", 
                 i,
                 sector.get_uid(),
                 sector.state,
@@ -21,23 +21,27 @@ pub async fn dump(storage: &'static StorageType) {
                 sector.get_measurement_index(),
                 sector.get_start_bin_index(),
                 sector.get_start_time(),
+                sector.get_lat(),
+                sector.get_lon(),
             );
         }
     }
 
     info!("MEASUREMENT:idx, uid, mean, std, num_seen, start_time, end_time");
-    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs");
+    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs, lat, lon");
     let measurement_storage = MeasurementStorage::new();
     for i in 0..NUM_MEASUREMENTS {
         if let Some(measurement) = measurement_storage.read(storage, i as u32) {
-            info!("MEASUREMENT:{}, {}, {}, {}, {}, {}, {}",
+            info!("MEASUREMENT:{}, {}, {}, {}, {}, {}, {}, {}, {}",
                 i,
                 measurement.uid,
                 measurement.mean,
                 measurement.std,
                 measurement.num_seen,
                 measurement.start_time,
-                measurement.end_time
+                measurement.end_time,
+                measurement.lat,
+                measurement.lon
             );
             for (j, observation) in measurement.observations.iter().enumerate() {
                 info!("OBSERVATION:{}, {}, {}, {}, {}, {}, {}, {}, {}, {}",

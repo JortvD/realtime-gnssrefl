@@ -4,6 +4,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Instant, Timer};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
+use libm::floorf;
 
 use crate::messages::{CommReqMsg, CommResMsg};
 use crate::rockblock::{IMTMessage, RockBlock9704, BODY_SIZE, IMT_DEFAULT_TOPIC};
@@ -49,8 +50,8 @@ const MAX_MEASUREMENT_PACKETS: usize = 10;
 pub struct Packet { // 5 + n * 5 bytes = 55
     battery: u8,
     temp: u8,
-    lat: u8,
-    lon: u8,
+    pub lat: u8,
+    pub lon: u8,
     measurements: Vec<MeasurementPacket, MAX_MEASUREMENT_PACKETS>,
 }
 
@@ -157,18 +158,22 @@ async fn run_comms(
     let mut packet = Packet::new(
         1,
         0,
-        128, 
-        128
+        0, 
+        0
     );
 
     let mut highest_uid = u32::MIN;
     let mut highest_index = u32::MIN;
+    let mut lat = 0f32;
+    let mut lon = 0f32;
 
     for sector in sectors.iter() {
         if let Ok(measurement) = get_measurement_packet(storage, sector.get_measurement_index()).await {
             if sector.get_uid() > highest_uid {
                 highest_uid = sector.get_uid();
                 highest_index = sector.get_measurement_index();
+                lat = sector.get_lat();
+                lon = sector.get_lon();
             }
             if packet.push(measurement).is_err() {
                 info!("[comm] Packet full, stopping adding measurements");
@@ -186,6 +191,10 @@ async fn run_comms(
             }
         }
     }
+
+    // Save quantized values in packet
+    packet.lat = coord_to_u8(lat, 1000.0);
+    packet.lon = coord_to_u8(lon, 1000.0);
 
     let data = packet.to_bytes();
     info!("[comm] Sending packet with {} measurements, total size {} bytes", packet.measurements.len(), data.len());
@@ -265,4 +274,10 @@ fn std_f32_to_u8(value: f32, max: f32) -> u8 {
     }
     let scaled = (value / max) * 255.0;
     scaled as u8
+}
+
+fn coord_to_u8(value: f32, scale: f32) -> u8 {
+    let i = (value * scale) - floorf(value * scale);
+
+    (i * 255.0) as u8
 }

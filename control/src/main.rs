@@ -153,7 +153,7 @@ async fn main(spawner: Spawner) {
         error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
     }
 
-    if dump_pin.is_high() || true {
+    if dump_pin.is_high() {
         info!("[main] dump pin is high, dumping storage and halting");
         Timer::after_millis(500).await;
         let start = Instant::now();

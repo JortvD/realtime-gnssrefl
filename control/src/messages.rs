@@ -1,6 +1,6 @@
 use heapless::Vec;
 
-use crate::{comms::CommsError, compute::ComputeError, measure::SectorFailError, realtime::Deviation, types::{Config, Sector, MAX_SECTORS}};
+use crate::{comms::CommsError, compute::ComputeError, measure::{MeasureResult, SectorFailError}, realtime::Deviation, types::{Config, Sector, MAX_SECTORS}};
 
 pub enum MeasureReqMsg {
     GetRefTime,
@@ -19,7 +19,7 @@ pub enum MeasureResMsg {
     RefTimeFail,
     SectorSuccess {
         sector_uid: u32,
-        deviation: Deviation,
+        result: MeasureResult,
     },
     SectorFail {
         sector_uid: u32,

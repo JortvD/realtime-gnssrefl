@@ -59,7 +59,7 @@ pub async fn task_measure(
                     info!("[meas] measurement for sector {} completed successfully", sector.get_measurement_index());
                     channel_res.send(MeasureResMsg::SectorSuccess { 
                         sector_uid: sector.get_uid(), 
-                        deviation: result.unwrap() 
+                        result: result.unwrap() 
                     }).await;
                 }
             }
@@ -70,11 +70,15 @@ pub async fn task_measure(
 
 const BIN_DATA_SIZE: usize = 4 * BURST_SIZE * BIN_BURST_SIZE;
 
-async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) -> Result<Deviation, SectorFailError> {
+async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType, sector: &Sector, config: &Config) -> Result<MeasureResult, SectorFailError> {
     let bin_storage = BinStorage::new();
     let mut bin_data = Vec::<u8, BIN_DATA_SIZE>::new();
     let mut last_bin_id: u32 = sector.get_start_bin_index();
     let deviation: Deviation;
+    let date: u32;
+    let mut lat_sum: f64 = 0.0;
+    let mut lon_sum: f64 = 0.0;
+    let mut coord_count: u32 = 0;
     let mut parser = NMEAParser::new_from_config(config);
 
     loop {
@@ -94,6 +98,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
 
         if sector.is_time_after_sector(burst.time) {
             deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
+            date = burst.date.unwrap_or(0);
             info!("[meas][{}] time is later than current sector, STOPPING", time_str.as_str());
             break;
         }
@@ -118,13 +123,26 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         bin_data.extend_from_slice(&burst.to_bytes()).map_err(|_| SectorFailError::BinOverflow)?;
 
         info!("[meas][{}] burst added to current bin {} (size: {} bytes)", time_str.as_str(), bin_id, bin_data.len());
+
+        if burst.lat != 0.0 && burst.lon != 0.0 {
+            lat_sum += burst.lat as f64;
+            lon_sum += burst.lon as f64;
+            coord_count += 1;
+        }
     }
 
     write_bin(storage, &bin_storage, last_bin_id, &bin_data).await?;
     bin_data.clear();
     info!("[meas] wrote last bin {} to storage", last_bin_id);
 
-    Ok(deviation)
+    let result = MeasureResult {
+        deviation,
+        date,
+        lat: (lat_sum / coord_count as f64) as f32,
+        lon: (lon_sum / coord_count as f64) as f32,
+    };
+
+    Ok(result)
 }
 
 async fn write_bin(storage: &'static StorageType, bin_storage: &BinStorage, bin_id: u32, bin_data: &Vec<u8, BIN_DATA_SIZE>) -> Result<(), SectorFailError> {
@@ -150,4 +168,11 @@ pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> 
     } else {
         None
     }
+}
+
+pub struct MeasureResult {
+    pub deviation: Deviation,
+    pub date: u32,
+    pub lat: f32,
+    pub lon: f32,
 }
