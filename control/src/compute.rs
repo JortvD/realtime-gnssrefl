@@ -14,7 +14,7 @@ use crate::math::{quicksort_xy, lombscargle_no_std, polyfit_and_smooth_no_std};
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
-const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 1;
+pub const BUF_BYTES: usize = BIN_BURST_SIZE * BURST_SIZE * 1;
 
 const MAX_BINS: usize = 12;
 
@@ -569,7 +569,16 @@ where
                             
                             if sample.get_elevation() < config.post_min_elevation as u8
                                 || sample.get_elevation() > config.post_max_elevation as u8
-                                || sample.get_azimuth() < config.post_min_azimuth as u16
+                                || (
+                                    config.post_min_azimuth > config.post_max_azimuth
+                                        && (sample.get_azimuth() < config.post_min_azimuth as u16
+                                            || sample.get_azimuth() > config.post_max_azimuth as u16)
+                                )
+                                || (
+                                    config.post_min_azimuth <= config.post_max_azimuth
+                                        && (sample.get_azimuth() < config.post_min_azimuth as u16
+                                            && sample.get_azimuth() > config.post_max_azimuth as u16)
+                                )
                                 || sample.get_azimuth() > config.post_max_azimuth as u16 
                             {
                                 continue;

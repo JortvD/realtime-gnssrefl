@@ -266,8 +266,12 @@ impl NMEAParser {
             if let Some(config) = &self.config {
                 if  elev < config.pre_min_elevation || 
                     elev > config.pre_max_elevation ||
-                    azim < config.pre_min_azimuth || 
-                    azim > config.pre_max_azimuth {
+                    (config.pre_min_elevation > config.pre_max_elevation 
+                        && (azim < config.pre_min_azimuth || 
+                        azim > config.pre_max_azimuth)) ||
+                    (config.pre_min_elevation <= config.pre_max_elevation 
+                        && (azim < config.pre_min_azimuth && 
+                        azim > config.pre_max_azimuth)) {
                     continue;
                 }
             }

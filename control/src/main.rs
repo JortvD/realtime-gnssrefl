@@ -10,6 +10,7 @@ use embassy_executor::Spawner;
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::clocks::ClockConfig;
 use embassy_rp::gpio;
+use embassy_rp::gpio::Input;
 use embassy_rp::uart;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::mutex::Mutex;
@@ -41,6 +42,7 @@ mod rockblock;
 mod realtime;
 mod scheduler;
 mod messages;
+mod dump;
 
 use crate::comms::task_comms;
 use crate::compute::task_compute;
@@ -115,7 +117,7 @@ async fn main(spawner: Spawner) {
     let mut gnss_uart_config = uart::Config::default();
     gnss_uart_config.baudrate = GNSS_UART_BAUDRATE;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_12, p.PIN_13, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
-    let mut gnss_sensor = GNSSSensor::new(gnss_uart);
+    let gnss_sensor = GNSSSensor::new(gnss_uart);
 
     // Rockblock pheripherals
     let mut config_uart_rockblock = uart::Config::default();
@@ -123,13 +125,16 @@ async fn main(spawner: Spawner) {
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_8, p.PIN_9, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let pin_power_enable = Output::new(p.PIN_10, Level::Low);
     let pin_iridium_enable = Output::new(p.PIN_26, Level::Low);
-    let pin_iridium_status = gpio::Input::new(p.PIN_27, gpio::Pull::Up);
+    let pin_iridium_status = Input::new(p.PIN_27, gpio::Pull::Up);
     let rockblock = RockBlock9704::new(
         uart_rockblock,
         pin_power_enable,
         pin_iridium_enable,
         pin_iridium_status
     );
+
+    // Dump pheripheral
+    let dump_pin = Input::new(p.PIN_15, gpio::Pull::Up);
 
     // Storage peripheral
     let storage = FlashStorage::new(p.FLASH, false);
@@ -146,6 +151,15 @@ async fn main(spawner: Spawner) {
     let result = spawner.spawn(watchdog_feeder(wdg));
     if result.is_err() {
         error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
+    }
+
+    if dump_pin.is_high() || true {
+        info!("[main] dump pin is high, dumping storage and halting");
+        Timer::after_millis(500).await;
+        let start = Instant::now();
+        dump::dump(&STORAGE).await;
+        info!("[main] dump complete in {} ms, halting", start.elapsed().as_millis());
+        return;
     }
 
     info!("[main] spawning tasks");
@@ -188,6 +202,7 @@ async fn main(spawner: Spawner) {
         &MEASURE_RESPONSE_CHANNEL,
         &COMPUTE_RESPONSE_CHANNEL,
         &COMM_RESPONSE_CHANNEL, 
+        &STORAGE
     ));
 
     if result.is_err() {
@@ -223,3 +238,4 @@ async fn watchdog_feeder(wdg: &'static mut Watchdog) {
         wdg.feed();
     }
 }
+

@@ -157,7 +157,7 @@ async fn run_comms(
     let mut packet = Packet::new(
         1,
         0,
-        1234, 
+        128, 
         128
     );
 

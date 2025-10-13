@@ -148,6 +148,10 @@ impl SectorList {
         self.sectors.len()
     }
 
+    pub fn iter(&self) -> core::slice::Iter<'_, Sector> {
+        self.sectors.iter()
+    }
+
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         let mut sectors = Vec::<Sector, MAX_SECTORS>::new();
         if &data[0..4] != b"SECT" {
