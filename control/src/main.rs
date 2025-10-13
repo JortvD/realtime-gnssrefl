@@ -126,13 +126,17 @@ async fn main(spawner: Spawner) {
     let adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
     let pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_26, Pull::None);
 
+    //Temp sensor
+    let pin_temp = adc::Channel::new_temp_sensor(p.ADC_TEMP_SENSOR);
+
     let battery = Battery::new(
         pin_bat_stat1, 
         pin_bat_stat2, 
         pin_bat_CE, 
         pin_bat_voltage, 
+        pin_temp,
         adc);
-
+    
     // LED peripherals
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 
