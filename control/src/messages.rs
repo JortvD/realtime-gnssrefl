@@ -60,3 +60,14 @@ pub enum CommResMsg{
         error: CommsError
     }
 }
+
+pub enum MonReqMsg{
+    GetBatVolt
+}
+
+pub enum MonResMsg{
+    BatVoltSuccess{
+        voltage: u32
+    },
+    BatVoltFail
+}

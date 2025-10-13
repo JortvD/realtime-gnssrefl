@@ -7,19 +7,21 @@ use heapless::Vec;
 use embassy_futures::select::{select4, Either4};
 
 use crate::realtime::RealTime;
+use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MonReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg, MonResMsg};
 use crate::storage::SectorStorage;
 use crate::types::{Config, Sector, SectorList, SectorState, MAX_SECTORS};
 use crate::{scheduler::*, StorageType};
-use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg};
 
 #[embassy_executor::task]
 pub async fn task_control(
     measure_request_channel: &'static Channel<CriticalSectionRawMutex, MeasureReqMsg, 8>,
     compute_request_channel: &'static Channel<CriticalSectionRawMutex, ComputeReqMsg, 8>,
     comm_request_channel: &'static Channel<CriticalSectionRawMutex, CommReqMsg, 8>,
+    mon_request_channel: &'static Channel<CriticalSectionRawMutex, MonReqMsg, 8>,
     measure_response_channel: &'static Channel<CriticalSectionRawMutex, MeasureResMsg, 8>,
     compute_response_channel: &'static Channel<CriticalSectionRawMutex, ComputeResMsg, 8>,
     comm_response_channel: &'static Channel<CriticalSectionRawMutex, CommResMsg, 8>,
+    mon_response_channel: &'static Channel<CriticalSectionRawMutex, MonResMsg, 8>,
     storage: &'static StorageType,
 ) {
     let config = Config::default();
@@ -54,7 +56,17 @@ pub async fn task_control(
 
     // TODO: Fill list_measured and list_computed from memory. 
     // This is for if there are still pending tasks from before power down
-    
+
+    // mon_request_channel.send(MonReqMsg::GetBatVolt).await;
+    // match mon_response_channel.receive().await {
+    //     MonResMsg::BatVoltSuccess { voltage } => {
+    //         info!("Batvolt = {}", voltage);
+    //     }
+    //     MonResMsg::BatVoltFail => {
+    //         info!("Measuring battery voltage failed");
+    //     }
+    // }
+
     loop {
         // Send out tasks
         if !realtime_available {

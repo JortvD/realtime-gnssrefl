@@ -316,7 +316,6 @@ pub enum RockBlock9704Status {
 
 pub struct RockBlock9704 {
     uart: uart::Uart<'static, uart::Async>,
-    pin_power_enable: gpio::Output<'static>,
     pin_iridium_enable: gpio::Output<'static>,
     pin_iridium_status: gpio::Input<'static>,
     message_reference: u8,
@@ -327,13 +326,11 @@ pub struct RockBlock9704 {
 impl RockBlock9704 {
     pub fn new(
         uart: uart::Uart<'static, uart::Async>,
-        pin_power_enable: gpio::Output<'static>,
         pin_iridium_enable: gpio::Output<'static>,
         pin_iridium_status: gpio::Input<'static>,
     ) -> Self {
         Self {
             uart,
-            pin_power_enable,
             pin_iridium_enable,
             pin_iridium_status,
             message_reference: 0,
@@ -527,7 +524,7 @@ impl RockBlock9704 {
         } else {
             if self.debug { info!("[ROCK] Powering off RockBlock 9704"); }
             self.pin_iridium_enable.set_low();
-            self.pin_power_enable.set_high();
+            //self.pin_power_enable.set_high();
             let mut i = 0;
             loop {
                 if self.pin_iridium_status.is_low() {
