@@ -62,12 +62,17 @@ pub enum CommResMsg{
 }
 
 pub enum MonReqMsg{
-    GetBatVolt
+    GetBatVolt,
+    GetTemp
 }
 
 pub enum MonResMsg{
     BatVoltSuccess{
         voltage: u32
     },
-    BatVoltFail
+    BatVoltFail,
+    TempSuccess{
+        temp_c: f32
+    },
+    TempFail
 }

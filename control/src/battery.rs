@@ -6,6 +6,10 @@
 //LH - Rec. fault
 //HL - Non rec. fault
 
+use defmt::info;
+use embassy_time::with_timeout;
+use embassy_time::Duration;
+
 use crate::gpio;
 use crate::adc;
 
@@ -15,7 +19,7 @@ pub struct Battery {
     pin_CE: gpio::Output<'static>,
     pin_voltage: adc::Channel<'static>,
     pin_temp: adc::Channel<'static>,
-    adc: adc::Adc<'static, adc::Async>,
+    adc: adc::Adc<'static, adc::Blocking>,
 }
 
 impl Battery {
@@ -24,7 +28,7 @@ impl Battery {
             pin_CE: gpio::Output<'static>, 
             pin_voltage: adc::Channel<'static>, 
             pin_temp: adc::Channel<'static>,
-            adc: adc::Adc<'static, adc::Async>,
+            adc: adc::Adc<'static, adc::Blocking>,
             ) -> Self {
         Battery { 
             pin_stat1, 
@@ -37,13 +41,23 @@ impl Battery {
     }
 
     pub async fn get_battery_voltage(&mut self) -> Result<u32, adc::Error> {
-        const NUM_SAMPLES: usize = 100;
-        const SAMPLE_DELAY_MS: u64 = 10; // 100 samples per second (100 * 10 ms = 1 s)
+        const NUM_SAMPLES: usize = 10;
+        const SAMPLE_DELAY_MS: u64 = 500;
 
         let mut sum: u32 = 0;
+        let mut actual_num: u32 = 0;
 
         for _ in 0..NUM_SAMPLES {
-            sum += self.adc.read(&mut self.pin_voltage).await? as u32;
+            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_voltage)).await {
+            //     Ok(res) => {
+            //         sum += res? as u32;
+            //         actual_num += 1;
+            //     },
+            //     Err(e) => {
+            //         info!("ADC timed out");
+            //     }
+            // };
+            sum+=self.adc.blocking_read(&mut self.pin_voltage)? as u32; 
             embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
         }
 
@@ -57,14 +71,24 @@ impl Battery {
         Ok((voltage_mv * 2.0) as u32)
     }
 
-    pub async fn get_chip_temperature(&mut self) -> Result<u32, adc::Error> {
-        const NUM_SAMPLES: usize = 100;
-        const SAMPLE_DELAY_MS: u64 = 10; // 100 samples per second (100 * 10 ms = 1 s)
+    pub async fn get_chip_temperature(&mut self) -> Result<f32, adc::Error> {
+        const NUM_SAMPLES: usize = 10;
+        const SAMPLE_DELAY_MS: u64 = 500;
 
         let mut sum: u32 = 0;
+        let mut actual_num: u32 = 0;
 
         for _ in 0..NUM_SAMPLES {
-            sum += self.adc.read(&mut self.pin_temp).await? as u32;
+            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_temp)).await {
+            //     Ok(res) => {
+            //         sum += res? as u32;
+            //         actual_num += 1;
+            //     },
+            //     Err(e) => {
+            //         info!("ADC timed out");
+            //     }
+            // };
+            sum+=self.adc.blocking_read(&mut self.pin_temp)? as u32; 
             embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
         }
 
@@ -72,10 +96,9 @@ impl Battery {
         let avg_raw = sum as f32 / NUM_SAMPLES as f32;
 
         // Convert to mV (assuming 3.3 V reference, 12-bit ADC)
-        let temp_C = convert_to_celsius(avg_raw);
+        let temp_c = convert_to_celsius(avg_raw);
 
-        // Compensate for 1:1 voltage divider
-        Ok((temp_C * 2.0) as u32)
+        Ok(temp_c)
     }
 
 }

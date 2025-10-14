@@ -17,7 +17,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::Duration;
 use embassy_time::Instant;
 use embassy_time::Timer;
-use gpio::{Level, Output, Input, Pull};
+use gpio::{Level, Output, Pull};
 use embassy_rp::bind_interrupts;
 use embassy_rp::uart::InterruptHandler as UARTInterruptHandler;
 use embassy_rp::peripherals::UART0;
@@ -73,7 +73,7 @@ pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
     UART1_IRQ  => UARTInterruptHandler<UART1>;
-    ADC_IRQ_FIFO => adc::InterruptHandler;
+    //ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 // Program metadata for `picotool info`.
@@ -123,7 +123,7 @@ async fn main(spawner: Spawner) {
     let pin_bat_stat2 = Input::new(p.PIN_21, Pull::None);
     let pin_bat_CE = Output::new(p.PIN_20, Level::Low);
 
-    let adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
+    let adc: adc::Adc<'_, adc::Blocking> = adc::Adc::new_blocking(p.ADC,  adc::Config::default());
     let pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_26, Pull::None);
 
     //Temp sensor
@@ -178,7 +178,7 @@ async fn main(spawner: Spawner) {
         error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
     }
 
-    if dump_pin.is_high() {
+    if dump_pin.is_low() {
         info!("[main] dump pin is high, dumping storage and halting");
         Timer::after_millis(500).await;
         let start = Instant::now();
@@ -187,34 +187,34 @@ async fn main(spawner: Spawner) {
         return;
     }
 
-    info!("[main] spawning tasks");
-    let result = spawner.spawn(task_measure(
-        &MEASURE_REQUEST_CHANNEL,
-        &MEASURE_RESPONSE_CHANNEL,
-        &STORAGE, 
-        gnss_sensor
-    ));
+    // info!("[main] spawning tasks");
+    // let result = spawner.spawn(task_measure(
+    //     &MEASURE_REQUEST_CHANNEL,
+    //     &MEASURE_RESPONSE_CHANNEL,
+    //     &STORAGE, 
+    //     gnss_sensor
+    // ));
 
-    if result.is_err() {
-        error!("Failed to spawn measure task: {}", result.unwrap_err());
-    }
+    // if result.is_err() {
+    //     error!("Failed to spawn measure task: {}", result.unwrap_err());
+    // }
        
-    let result = spawner.spawn(task_compute(
-        &COMPUTE_REQUEST_CHANNEL, 
-        &COMPUTE_RESPONSE_CHANNEL, 
-        &STORAGE
-    ));
+    // let result = spawner.spawn(task_compute(
+    //     &COMPUTE_REQUEST_CHANNEL, 
+    //     &COMPUTE_RESPONSE_CHANNEL, 
+    //     &STORAGE
+    // ));
 
-    if result.is_err() {
-        error!("Failed to spawn compute task: {}", result.unwrap_err());
-    }
+    // if result.is_err() {
+    //     error!("Failed to spawn compute task: {}", result.unwrap_err());
+    // }
 
-    let result = spawner.spawn(task_comms(
-        &COMM_REQUEST_CHANNEL, 
-        &COMM_RESPONSE_CHANNEL,
-        &STORAGE,
-        rockblock
-    ));
+    // let result = spawner.spawn(task_comms(
+    //     &COMM_REQUEST_CHANNEL, 
+    //     &COMM_RESPONSE_CHANNEL,
+    //     &STORAGE,
+    //     rockblock
+    // ));
 
     if result.is_err() {
         error!("Failed to spawn comms task: {}", result.unwrap_err());
