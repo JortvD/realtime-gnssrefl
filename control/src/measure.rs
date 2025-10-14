@@ -96,6 +96,11 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
             continue;
         }
 
+        if burst.samples.len() == 1 {
+            info!("[meas][{}] no valid samples in burst, skipping", time_str.as_str());
+            continue;
+        }
+
         if sector.is_time_after_sector(burst.time) {
             deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
             date = burst.date.unwrap_or(0);
@@ -108,7 +113,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
             time_str.as_str(),
             nmeaburst.bytes,
             nmeaburst.duration.as_millis(),
-            burst.samples.len()
+            burst.samples.len()-1
         );
 
         let bin_id = sector.get_bin_for_time(burst.time);
@@ -153,21 +158,26 @@ async fn write_bin(storage: &'static StorageType, bin_storage: &BinStorage, bin_
 
 pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> {
     gnss_sensor.read_burst().await;
-    let mut parser = NMEAParser::new();
-    let nmeaburst = gnss_sensor.read_burst().await;
-    let burst = parser.parse_burst(&nmeaburst, true);
-    if let Some(date) = burst.date {
-        if date > 40000 {
-            let date = date_from_days(date as i64);
-            info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
-            None
-        } else {
-            let deviation: Deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
-            Some((deviation, date))
+    const MAX_ATTEMPTS: u8 = 100;
+
+    for i in 0..MAX_ATTEMPTS {
+        let mut parser = NMEAParser::new();
+        let nmeaburst = gnss_sensor.read_burst().await;
+        let burst = parser.parse_burst(&nmeaburst, true);
+        if let Some(date) = burst.date {
+            if date > 40000 {
+                let date = date_from_days(date as i64);
+                info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
+            } else if burst.time == u32::MAX {
+                info!("[meas] WARNING: parsed time is invalid");
+            } else {
+                let deviation: Deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
+                return Some((deviation, date))
+            }
         }
-    } else {
-        None
     }
+
+    None
 }
 
 pub struct MeasureResult {

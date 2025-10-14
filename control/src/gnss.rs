@@ -83,6 +83,7 @@ impl GNSSSensor {
             }   
 
             if !error_in_line {
+                info!("{}", line.as_str());
                 nmeaburst.push(line);
             }
 

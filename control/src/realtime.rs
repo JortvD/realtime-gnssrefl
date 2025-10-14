@@ -4,7 +4,7 @@ use embassy_time::Timer;
 
 use crate::utils;
 
-pub const SPEEDUP_FACTOR: u64 = 10;
+pub const SPEEDUP_FACTOR: u64 = 1;
 const SECONDS_PER_DAY: u32 = 86400;
 
 pub struct RealTime {
