@@ -158,7 +158,7 @@ async fn write_bin(storage: &'static StorageType, bin_storage: &BinStorage, bin_
 
 pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> {
     gnss_sensor.read_burst().await;
-    const MAX_ATTEMPTS: u8 = 100;
+    const MAX_ATTEMPTS: u16 = 128*128;
 
     for i in 0..MAX_ATTEMPTS {
         let mut parser = NMEAParser::new();
@@ -167,13 +167,16 @@ pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> 
         if let Some(date) = burst.date {
             if date > 40000 {
                 let date = date_from_days(date as i64);
-                info!("[meas] WARNING: parsed date seems wrong: {} is {}-{}-{}", date, date.2, date.1, date.0);
+                info!("[meas][{}] WARNING: parsed date seems wrong: {} is {}-{}-{}", i, date, date.2, date.1, date.0);
             } else if burst.time == u32::MAX {
-                info!("[meas] WARNING: parsed time is invalid");
+                info!("[meas][{}] WARNING: parsed time is invalid", i);
             } else {
                 let deviation: Deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
+                info!("[meas][{}] parsed date {} and time {}", i, date, seconds_to_time_str(burst.time).as_str());
                 return Some((deviation, date))
             }
+        } else {
+            info!("[meas][{}] WARNING: no valid date parsed", i);
         }
     }
 

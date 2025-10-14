@@ -1,6 +1,5 @@
 use core::str::Split;
 
-use defmt::info;
 use embassy_time::Duration;
 use heapless::Vec;
 use crate::{types::*, utils};
@@ -150,7 +149,6 @@ impl NMEAParser {
         let date_str = it.next()?;
 
         if (date_str.len() != 6) {
-            info!("[nmea] Invalid date string: {}", date_str);
             return None;
         }
 
@@ -165,7 +163,6 @@ impl NMEAParser {
         let time_str = it.next()?;
 
         if (time_str.len() < 6) {
-            info!("[nmea] Invalid time string: {}", time_str);
             return None;
         }
 

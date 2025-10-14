@@ -116,7 +116,7 @@ async fn main(spawner: Spawner) {
     // Watchdog
     let mut wdg = Watchdog::new(p.WATCHDOG);
     wdg.pause_on_debug(false);
-    wdg.start(Duration::from_secs(3));
+    wdg.start(Duration::from_secs(10));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
@@ -266,7 +266,7 @@ async fn led_blink(mut led: Output<'static>) {
 async fn watchdog_feeder(wdg: &'static mut Watchdog) {
     info!("[wdg_]: starting");
     loop {
-        Timer::after(Duration::from_secs(10)).await;
+        Timer::after(Duration::from_secs(5)).await;
         wdg.feed();
     }
 }

@@ -1,6 +1,6 @@
 use defmt::info;
 use embassy_rp::uart;
-use embassy_time::Instant;
+use embassy_time::{Instant, Timer};
 
 use crate::{nmea::NmeaBurst, types::Nmealine};
 
@@ -83,7 +83,7 @@ impl GNSSSensor {
             }   
 
             if !error_in_line {
-                info!("{}", line.as_str());
+                // info!("{}", line.as_str());
                 nmeaburst.push(line);
             }
 
@@ -116,6 +116,8 @@ impl GNSSSensor {
 
         self.send_ubx(command).await;
 
+        Timer::after_secs(10).await;
+
         info!("[meas] GNSS put to sleep");
         self.awake = false;
     }
@@ -132,6 +134,8 @@ impl GNSSSensor {
                 info!("[meas] Error waking GNSS: {}", e);
             }
         }
+
+        Timer::after_secs(10).await;
 
         info!("[meas] GNSS woke up");
         self.awake = true;
