@@ -73,7 +73,7 @@ pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
     UART1_IRQ  => UARTInterruptHandler<UART1>;
-    ADC_IRQ_FIFO => adc::InterruptHandler;
+    //ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 // Program metadata for `picotool info`.
@@ -123,16 +123,20 @@ async fn main(spawner: Spawner) {
     let pin_bat_stat2 = Input::new(p.PIN_21, Pull::None);
     let pin_bat_CE = Output::new(p.PIN_20, Level::Low);
 
-    let adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
+    let adc: adc::Adc<'_, adc::Blocking> = adc::Adc::new_blocking(p.ADC,  adc::Config::default());
     let pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_26, Pull::None);
+
+    //Temp sensor
+    let pin_temp = adc::Channel::new_temp_sensor(p.ADC_TEMP_SENSOR);
 
     let battery = Battery::new(
         pin_bat_stat1, 
         pin_bat_stat2, 
         pin_bat_CE, 
         pin_bat_voltage, 
+        pin_temp,
         adc);
-
+    
     // LED peripherals
     let led: Output<'_> = Output::new(p.PIN_25, Level::Low);
 

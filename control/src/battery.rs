@@ -6,6 +6,10 @@
 //LH - Rec. fault
 //HL - Non rec. fault
 
+use defmt::info;
+use embassy_time::with_timeout;
+use embassy_time::Duration;
+
 use crate::gpio;
 use crate::adc;
 
@@ -14,7 +18,8 @@ pub struct Battery {
     pin_stat2: gpio::Input<'static>,
     pin_CE: gpio::Output<'static>,
     pin_voltage: adc::Channel<'static>,
-    adc: adc::Adc<'static, adc::Async>
+    pin_temp: adc::Channel<'static>,
+    adc: adc::Adc<'static, adc::Blocking>,
 }
 
 impl Battery {
@@ -22,22 +27,86 @@ impl Battery {
             pin_stat2: gpio::Input<'static>, 
             pin_CE: gpio::Output<'static>, 
             pin_voltage: adc::Channel<'static>, 
-            adc: adc::Adc<'static, adc::Async> ) -> Self {
+            pin_temp: adc::Channel<'static>,
+            adc: adc::Adc<'static, adc::Blocking>,
+            ) -> Self {
         Battery { 
             pin_stat1, 
             pin_stat2, 
             pin_CE, 
             pin_voltage, 
-            adc 
+            pin_temp,
+            adc,
         }
     }
 
     pub async fn get_battery_voltage(&mut self) -> Result<u32, adc::Error> {
-        let raw = self.adc.read(&mut self.pin_voltage).await?;
-        // Convert to mV (assuming 3.3V reference, 12-bit ADC)
-        let voltage_mv = raw as f32* 3300.0 / 4096.0;
+        const NUM_SAMPLES: usize = 10;
+        const SAMPLE_DELAY_MS: u64 = 500;
+
+        let mut sum: u32 = 0;
+        let mut actual_num: u32 = 0;
+
+        for _ in 0..NUM_SAMPLES {
+            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_voltage)).await {
+            //     Ok(res) => {
+            //         sum += res? as u32;
+            //         actual_num += 1;
+            //     },
+            //     Err(e) => {
+            //         info!("ADC timed out");
+            //     }
+            // };
+            sum+=self.adc.blocking_read(&mut self.pin_voltage)? as u32; 
+            embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
+        }
+
+        // Compute average ADC reading
+        let avg_raw = sum as f32 / NUM_SAMPLES as f32;
+
+        // Convert to mV (assuming 3.3 V reference, 12-bit ADC)
+        let voltage_mv = avg_raw * 3300.0 / 4096.0;
+
         // Compensate for 1:1 voltage divider
         Ok((voltage_mv * 2.0) as u32)
     }
 
+    pub async fn get_chip_temperature(&mut self) -> Result<f32, adc::Error> {
+        const NUM_SAMPLES: usize = 10;
+        const SAMPLE_DELAY_MS: u64 = 500;
+
+        let mut sum: u32 = 0;
+        let mut actual_num: u32 = 0;
+
+        for _ in 0..NUM_SAMPLES {
+            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_temp)).await {
+            //     Ok(res) => {
+            //         sum += res? as u32;
+            //         actual_num += 1;
+            //     },
+            //     Err(e) => {
+            //         info!("ADC timed out");
+            //     }
+            // };
+            sum+=self.adc.blocking_read(&mut self.pin_temp)? as u32; 
+            embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
+        }
+
+        // Compute average ADC reading
+        let avg_raw = sum as f32 / NUM_SAMPLES as f32;
+
+        // Convert to mV (assuming 3.3 V reference, 12-bit ADC)
+        let temp_c = convert_to_celsius(avg_raw);
+
+        Ok(temp_c)
+    }
+
+}
+
+fn convert_to_celsius(raw_temp: f32) -> f32 {
+    // According to chapter 12.4.6 Temperature Sensor in RP235x datasheet
+    let temp = 27.0 - (raw_temp as f32 * 3.3 / 4096.0 - 0.706) / 0.001721;
+    let sign = if temp < 0.0 { -1.0 } else { 1.0 };
+    let rounded_temp_x10: i16 = ((temp * 10.0) + 0.5 * sign) as i16;
+    (rounded_temp_x10 as f32) / 10.0
 }
