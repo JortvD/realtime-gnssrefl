@@ -187,34 +187,34 @@ async fn main(spawner: Spawner) {
         return;
     }
 
-    // info!("[main] spawning tasks");
-    // let result = spawner.spawn(task_measure(
-    //     &MEASURE_REQUEST_CHANNEL,
-    //     &MEASURE_RESPONSE_CHANNEL,
-    //     &STORAGE, 
-    //     gnss_sensor
-    // ));
+    info!("[main] spawning tasks");
+    let result = spawner.spawn(task_measure(
+        &MEASURE_REQUEST_CHANNEL,
+        &MEASURE_RESPONSE_CHANNEL,
+        &STORAGE, 
+        gnss_sensor
+    ));
 
-    // if result.is_err() {
-    //     error!("Failed to spawn measure task: {}", result.unwrap_err());
-    // }
+    if result.is_err() {
+        error!("Failed to spawn measure task: {}", result.unwrap_err());
+    }
        
-    // let result = spawner.spawn(task_compute(
-    //     &COMPUTE_REQUEST_CHANNEL, 
-    //     &COMPUTE_RESPONSE_CHANNEL, 
-    //     &STORAGE
-    // ));
+    let result = spawner.spawn(task_compute(
+        &COMPUTE_REQUEST_CHANNEL, 
+        &COMPUTE_RESPONSE_CHANNEL, 
+        &STORAGE
+    ));
 
-    // if result.is_err() {
-    //     error!("Failed to spawn compute task: {}", result.unwrap_err());
-    // }
+    if result.is_err() {
+        error!("Failed to spawn compute task: {}", result.unwrap_err());
+    }
 
-    // let result = spawner.spawn(task_comms(
-    //     &COMM_REQUEST_CHANNEL, 
-    //     &COMM_RESPONSE_CHANNEL,
-    //     &STORAGE,
-    //     rockblock
-    // ));
+    let result = spawner.spawn(task_comms(
+        &COMM_REQUEST_CHANNEL, 
+        &COMM_RESPONSE_CHANNEL,
+        &STORAGE,
+        rockblock
+    ));
 
     if result.is_err() {
         error!("Failed to spawn comms task: {}", result.unwrap_err());
