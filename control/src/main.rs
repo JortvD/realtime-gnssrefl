@@ -67,7 +67,7 @@ static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg,
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
-pub const GNSS_UART_BAUDRATE: u32 = 115_200;
+pub const GNSS_UART_BAUDRATE: u32 = 9_600;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 
 bind_interrupts!(pub struct Irqs {
@@ -104,19 +104,19 @@ fn create_clock_config() -> ClockConfig {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let start = Instant::now();
     info!("[main] startup");
     // Init peripherals
     let mut config: embassy_rp::config::Config = Default::default();
     config.clocks = create_clock_config();
     let p = embassy_rp::init(config);
+    let start = Instant::now();
 
     info!("[main] clock freq: {} MHz", clk_sys_freq() / 1_000_000);
 
     // Watchdog
     let mut wdg = Watchdog::new(p.WATCHDOG);
     wdg.pause_on_debug(false);
-    wdg.start(Duration::from_secs(3));
+    wdg.start(Duration::from_secs(10));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
@@ -151,7 +151,7 @@ async fn main(spawner: Spawner) {
     config_uart_rockblock.baudrate = ROCKBLOCK_UART_BAUDRATE;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_4, p.PIN_5, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
     let pin_iridium_enable = Output::new(p.PIN_7, Level::Low);
-    let pin_iridium_status = gpio::Input::new(p.PIN_6, gpio::Pull::Up);
+    let pin_iridium_status = gpio::Input::new(p.PIN_6, gpio::Pull::None);
     let rockblock = RockBlock9704::new(
         uart_rockblock,
         pin_iridium_enable,
@@ -179,12 +179,11 @@ async fn main(spawner: Spawner) {
     }
 
     if dump_pin.is_low() {
-        info!("[main] dump pin is high, dumping storage and halting");
+        info!("[main] dump pin is low, dumping storage and halting");
         Timer::after_millis(500).await;
         let start = Instant::now();
         dump::dump(&STORAGE).await;
         info!("[main] dump complete in {} ms, halting", start.elapsed().as_millis());
-        return;
     }
 
     info!("[main] spawning tasks");
@@ -252,7 +251,7 @@ async fn main(spawner: Spawner) {
         error!("Failed to spawn Monitor task: {}", result.unwrap_err());
     }
     
-    info!("[main] startup complete in {} ms", start.elapsed().as_millis());
+    info!("[main] startup complete in {} ms", Instant::now().as_millis() - start.as_millis());
 }
 
 
@@ -271,7 +270,7 @@ async fn led_blink(mut led: Output<'static>) {
 async fn watchdog_feeder(wdg: &'static mut Watchdog) {
     info!("[wdg_]: starting");
     loop {
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_secs(5)).await;
         wdg.feed();
     }
 }

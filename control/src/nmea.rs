@@ -148,6 +148,10 @@ impl NMEAParser {
         let _course = it.next()?;
         let date_str = it.next()?;
 
+        if (date_str.len() != 6) {
+            return None;
+        }
+
         let day = date_str[0..2].parse::<u16>().ok()?;
         let month = date_str[2..4].parse::<u16>().ok()?;
         let year = date_str[4..6].parse::<u16>().ok()? + 2000;
@@ -157,6 +161,11 @@ impl NMEAParser {
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<(u32, f32, f32)> {
         let time_str = it.next()?;
+
+        if (time_str.len() < 6) {
+            return None;
+        }
+
         let hours = time_str[0..2].parse::<u32>().ok()?;
         let minutes = time_str[2..4].parse::<u32>().ok()?;
         let seconds = time_str[4..6].parse::<u32>().ok()?;

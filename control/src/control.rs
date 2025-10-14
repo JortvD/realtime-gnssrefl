@@ -112,16 +112,15 @@ pub async fn task_control(
         }
 
         // Wait for responses
-        info!("[cont] saving sectors {} to storage", sectors.len());
         save_sectors(storage, &sectors).await;
-
-        info!("[cont] waiting for events");
 
         let mut timer = if let Some(st) = sleep_until {
             realtime.get_timer(st)
         } else {
-            Timer::after_secs(u64::MAX)
+            Timer::after_secs(u32::MAX as u64)
         };
+
+        info!("[cont] waiting for events or next timer");
 
         let result = select4(
             &mut timer,
@@ -141,7 +140,7 @@ pub async fn task_control(
                     sleep_until = Some(next_start_time);
                     sectors.push(next_sector);
                 } else {
-                    panic!("No sector in AWAITING state when timer expired");
+                    info!("No sector in AWAITING state when timer expired");
                 }
             }
             Either4::Second(measure_res_msg) => {
@@ -215,6 +214,11 @@ pub async fn task_control(
 }
 
 pub async fn save_sectors(storage: &'static StorageType, sectors: &SectorList) {
+    if sectors.len() == 0 {
+        info!("[cont] no sectors to save");
+        return;
+    }
+    info!("[cont] saving {} sectors to storage", sectors.len());
     let mut storage_lock = storage.lock().await;
     let storage = storage_lock.as_mut().expect("Storage should be initialized");
     let sector_storage = SectorStorage::new();
