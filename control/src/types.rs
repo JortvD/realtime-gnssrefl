@@ -1,9 +1,11 @@
 use defmt::info;
 use heapless::{Vec, String};
 
+use crate::{realtime::RealTime, utils};
+
 // NMEA processing
-pub const NMEA_MAX_LINES: usize = 100;
-pub const NMEA_LINE_LEN: usize = 256;
+pub const NMEA_MAX_LINES: usize = 64;
+pub const NMEA_LINE_LEN: usize = 128;
 
 pub type Nmealine = String<NMEA_LINE_LEN>;
 pub type NmeaBurst = Vec<Nmealine,NMEA_MAX_LINES>;
@@ -22,13 +24,15 @@ pub const START_ADDRESS: u32 = 0x100000; // Start at 1MB offset (flash-relative)
 pub const NUM_BINS: usize = 50;
 pub const BINS_CONTAINER_START: usize = 0;
 // 50: measurements (1 container)
-pub const NUM_MEASUREMENTS: usize = CONTAINER_SIZE;
+pub const NUM_MEASUREMENTS: usize = NUM_CONTAINER_BLOCKS;
 pub const MEASUREMENTS_CONTAINER_START: usize = 50;
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
 pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin (4 minutes)
 
 pub const MEASUREMENT_STORAGE_SIZE: usize = BLOCK_SIZE; // 4KB
+
+pub const WARMUP_TIME: u32 = 30;
 
 pub type Sample = u32;
 pub type Burst = Vec<Sample, BURST_SIZE>;
@@ -41,60 +45,115 @@ pub struct Config {
     pub pre_min_azimuth: u32,
     pub pre_max_azimuth: u32,
 
-    pub sector_measure_duration: u32,
-    pub sector_midpoints: Vec<u32, 24>,
+    pub sector_mid_times: Vec<u32, 24>,
 
     pub bins_per_sector: u32,
     pub seconds_per_bin: u32,
+
+    pub num_send_measurements: u32,
+}
+
+impl Config {
+    pub fn get_mid_times_as_str(&self) -> String<128> {
+        let mut mid_times_str = String::<128>::new();
+        for (idx, &midpoint) in self.sector_mid_times.iter().enumerate() {
+            let time_str = utils::seconds_to_time_str(midpoint);
+            mid_times_str.push_str(&time_str).unwrap();
+            if idx < self.sector_mid_times.len() - 1 {
+                mid_times_str.push_str(", ").unwrap();
+            }
+        }
+        mid_times_str
+    }
+
+    pub fn get_measure_duration(&self) -> u32 {
+        return self.bins_per_sector*self.seconds_per_bin;
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut midpoints = Vec::<u32, 24>::new();
-        midpoints.push(5).unwrap();
-        midpoints.push(11).unwrap();
-        midpoints.push(17).unwrap();
-        midpoints.push(23).unwrap();
+        let mut mid_times = Vec::<u32, 24>::new();
+        mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("03:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("05:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("19:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("21:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("23:00:00").unwrap()).unwrap();
         Self {
             pre_min_elevation: 10,
             pre_max_elevation: 30,
             pre_min_azimuth: 50,
             pre_max_azimuth: 150,
-            sector_measure_duration: 60 * 60 * 2,
-            sector_midpoints: midpoints,
+            sector_mid_times: mid_times,
 
-            bins_per_sector: 30,
+            bins_per_sector: 15,
             seconds_per_bin: 240,
+
+            num_send_measurements: 3,
         }
     }
 }
 
+# [derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectorState {
+    AWAITING,
+    TO_MEASURE,
+    MEASURING,
+    TO_COMPUTE,
+    COMPUTING,
+    TO_COMMUNICATE,
+    COMMUNICATING,
+    DONE
+}
+
+#[derive(Clone, Debug)]
 pub struct Sector {
-    index: u32,
-    start_bin_id: u32,
+    uid: u32,
+
+    midpoint_index: u32,
+    measurement_index: u32,
+    start_bin_index: u32,
     start_time: u32,
     n_bins: u32,
 
     seconds_per_bin: u32,
+    pub state: SectorState,
 }
 
 impl Sector {
-    pub fn new(index: u32, start_bin_id: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32) -> Self {
+    pub fn new(uid: u32, midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32, state: SectorState) -> Self {
         Self {
-            index,
-            start_bin_id,
+            uid,
+            midpoint_index,
+            measurement_index,
+            start_bin_index,
             start_time,
             n_bins,
             seconds_per_bin,
+            state,
         }
     }
-
-    pub fn get_index(&self) -> u32 {
-        self.index
+    pub fn get_uid(&self) -> u32 {
+        self.uid
     }
 
-    pub fn get_start_bin_id(&self) -> u32 {
-        self.start_bin_id
+    pub fn get_midpoint_index(&self) -> u32 {
+        self.midpoint_index
+    }
+
+    pub fn get_measurement_index(&self) -> u32 {
+        self.measurement_index
+    }
+
+    pub fn get_start_bin_index(&self) -> u32 {
+        self.start_bin_index
     }
 
     pub fn get_start_time(&self) -> u32 {
@@ -108,14 +167,14 @@ impl Sector {
     pub fn get_bins(&self) -> Vec<u32, 128> {
         let mut bins = Vec::<u32, 128>::new();
         for i in 0..self.n_bins {
-            bins.push((self.start_bin_id + i) % NUM_BINS as u32).unwrap();
+            bins.push((self.start_bin_index + i) % NUM_BINS as u32).unwrap();
         }
         bins
     }
 
     pub fn get_bin_for_time(&self, time: u32) -> u32 {
         let dt = time - self.start_time;
-        let bin_id = self.start_bin_id + dt / self.seconds_per_bin;
+        let bin_id = self.start_bin_index + dt / self.seconds_per_bin;
 
         bin_id % NUM_BINS as u32
     }
@@ -125,7 +184,11 @@ impl Sector {
     }
 
     pub fn is_time_after_sector(&self, time: u32) -> bool {
-        time > self.get_end_time()
+        time >= self.get_end_time()
+    }
+
+    pub fn is_succeeding(&self, previous: &Sector) -> bool {
+        RealTime::diff_wrapping(self.start_time, previous.get_end_time()) < 30 // TODO remove magic number
     }
 }
 
@@ -164,7 +227,7 @@ impl Measurement {
         let num_seen = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         let mean = f32::from_le_bytes([data[12], data[13], data[14], data[15]]);
         let std = f32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-        info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
+        // info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
         let mut observations = Vec::<Observation, MAX_MEASUREMENT_OBSERVATIONS>::new();
 
         for i in 0..MAX_MEASUREMENT_OBSERVATIONS {
@@ -197,7 +260,7 @@ impl Measurement {
         data[8..12].copy_from_slice(&self.num_seen.to_le_bytes());
         data[12..16].copy_from_slice(&self.mean.to_le_bytes());
         data[16..20].copy_from_slice(&self.std.to_le_bytes());
-        info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
+        // info!("Header: {},{},{},{},{} -> {:?}", self.start_time, self.end_time, self.num_seen, self.mean, self.std, &data[0..20]);
 
         for (i, obs) in self.observations.iter().enumerate() {
             let obs_bytes = obs.to_bytes();

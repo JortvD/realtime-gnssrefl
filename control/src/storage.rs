@@ -44,6 +44,10 @@ impl FlashStorage {
         let start_time = if self.timing { Some(Instant::now()) } else { None };
         let addr = self.get_container_address(container_id) + offset;
 
+        if self.timing {
+            info!("Writing {} bytes to flash at address {}", data.len(), addr);
+        }
+
         self.flash.blocking_write(addr, &data)?;
 
         if let Some(start) = start_time {
@@ -63,6 +67,10 @@ impl FlashStorage {
         let addr = self.get_container_address(container_id) + offset;
         let buf_len = buffer.len();
 
+        if self.timing {
+            info!("Reading {} bytes from flash at address {}", buf_len, addr);
+        }
+
         self.flash.blocking_read(addr, &mut buffer[..buf_len])?;
 
         if let Some(start) = start_time {
@@ -80,6 +88,10 @@ impl FlashStorage {
         let start_time = if self.timing { Some(Instant::now()) } else { None };
         let start = self.get_container_address(container_id) + start_offset;
         let end = self.get_container_address(container_id) + end_offset;
+
+        if self.timing {
+            info!("Erasing flash from address {} to {}", start, end);
+        }
 
         self.flash.blocking_erase(start, end)?;
 
@@ -135,7 +147,7 @@ impl MeasurementStorage {
             error!("Measurement location exceeds container size");
             return;
         }
-        info!("Storing measurement at location {}, container {}, offset {}-{}", location, self.get_container_id(), start_offset, end_offset);
+        // info!("Storing measurement at location {}, container {}, offset {}-{}", location, self.get_container_id(), start_offset, end_offset);
         storage.partial_erase(self.get_container_id(), start_offset, end_offset).expect("Failed to erase measurement location");
         storage.write(self.get_container_id(), start_offset as u32, &data).expect("Failed to write measurement");
     }
@@ -146,7 +158,7 @@ impl MeasurementStorage {
             error!("Measurement location exceeds container size");
             return None;
         }
-        info!("Reading measurement at location {}, container {}, offset {}", location, self.get_container_id(), offset);
+        // info!("Reading measurement at location {}, container {}, offset {}", location, self.get_container_id(), offset);
         let mut data = [0u8; MEASUREMENT_SIZE];
         storage.read(self.get_container_id(), offset, &mut data).expect("Failed to read measurement");
 

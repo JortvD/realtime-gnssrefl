@@ -9,16 +9,17 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 
 pub const CLK_HZ_HIGH: u32 = 150_000_000;
-pub const CLK_HZ_LOW: u32 =   12_000_000;
+pub const CLK_HZ_LOW: u32 = 12_000_000;
+
+pub struct ClkRequest {
+    _private: ()
+}
 
 enum ClkMsg {
     Request,
     Release,
 }
 
-pub struct ClkRequest {
-    _private: ()
-}
 
 static CLK_CHANNEL: Channel<CriticalSectionRawMutex, ClkMsg, 8> = Channel::new();
 
@@ -66,7 +67,7 @@ fn set_sysclk_hz_rp235x(target_hz: u32) -> Result<u32, &'static str> {
     // Effective new SYS frequency = base / (int + frac/65536)
     let new_sys = ((base as u64) << 16) / (((int as u64) << 16) | (frac as u64));
 
-    info!("CLK frequency: {:?}", new_sys);
+    info!("[CLK] Changed frequency: {:?}", new_sys);
     Ok(new_sys as u32)
 }
 

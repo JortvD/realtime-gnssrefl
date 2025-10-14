@@ -1,8 +1,9 @@
 use core::str::Split;
 
+use defmt::info;
 use embassy_time::Duration;
 use heapless::Vec;
-use crate::types::*;
+use crate::{types::*, utils};
 
 pub const BURST_SAT_SIZE: usize = 63;
 
@@ -40,6 +41,7 @@ impl NmeaBurst {
 
 pub struct Burst {
     pub time: u32,
+    pub date: Option<u32>,
     pub num: u32,
     pub samples: Vec<Sample, BURST_SAT_SIZE>,
 }
@@ -48,6 +50,7 @@ impl Burst {
     pub fn new() -> Self {
         Self {
             time: 0,
+            date: None,
             num: 0,
             samples: Vec::new(),
         }
@@ -84,7 +87,7 @@ impl NMEAParser {
         Self { config: config.clone() }
     }
 
-    pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst) -> Burst {
+    pub fn parse_burst(&mut self, nmeaburst: &NmeaBurst, add_date: bool) -> Burst {
         let mut current_gps_time = u32::MAX;
         let mut burst = Burst::new();
         let mut num: u32 = 0;
@@ -109,6 +112,9 @@ impl NMEAParser {
             else if self.is_command(command, "GSV") {
                 self.parse_gsv(it, command, &mut burst.samples, &mut num);
             }
+            else if self.is_command(command, "RMC") && add_date {
+                burst.date = self.parse_rmc(it);
+            }
         }
 
         let mut header = current_gps_time;
@@ -119,6 +125,24 @@ impl NMEAParser {
         burst.num = num;
 
         burst
+    }
+
+    fn parse_rmc(&mut self, mut it: Split<'_, char>) -> Option<u32> {
+        let _time = it.next()?;
+        let _status = it.next()?;
+        let _lat = it.next()?;
+        let _northsouth = it.next()?;
+        let _lon = it.next()?;
+        let _eastwest = it.next()?;
+        let _speed = it.next()?;
+        let _course = it.next()?;
+        let date_str = it.next()?;
+
+        let day = date_str[0..2].parse::<u16>().ok()?;
+        let month = date_str[2..4].parse::<u16>().ok()?;
+        let year = date_str[4..6].parse::<u16>().ok()? + 2000;
+
+        Some(utils::days_from_civil(year as i32, month as u32, day as u32) as u32)
     }
 
     fn parse_gga<'a>(&mut self, mut it: Split<'a, char>) -> Option<u32> {
@@ -264,3 +288,4 @@ impl NMEAParser {
         None
     }
 }
+

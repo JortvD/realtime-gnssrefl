@@ -1,3 +1,5 @@
+#![no_std]
+
 use core::f32::consts::PI;
 
 /// Kahan compensated addition (f32).
@@ -9,22 +11,44 @@ fn kahan_add(sum: &mut f32, c: &mut f32, x: f32) {
     *sum = t;
 }
 
-/// Scratch buffers for the uniform-grid accelerator.
-/// All slices must have length >= number of valid (finite) samples.
-pub struct LsScratch<'a> {
-    pub t:     &'a mut [f32; 240 * 30], // packed finite times
-    pub yv:    &'a mut [f32; 240 * 30], // packed (y - mean)
-    pub s_w:   &'a mut [f32; 240 * 30], // sin(ω_k t_i) current
-    pub c_w:   &'a mut [f32; 240 * 30], // cos(ω_k t_i) current
-    pub s_d:   &'a mut [f32; 240 * 30], // sin(Δω t_i), constant across k
-    pub c_d:   &'a mut [f32; 240 * 30], // cos(Δω t_i), constant across k
+// -------- Fixed-point helpers (i16 <-> [-1, 1]) --------
+
+#[inline(always)]
+fn q_from_f32(x: f32) -> i16 {
+    // clamp to [-1,1], then map to i16 range [-32767, 32767]
+    const SCALE: f32 = 32767.0;
+    let y = if x > 1.0 { 1.0 } else if x < -1.0 { -1.0 } else { x };
+    (y * SCALE) as i16
 }
 
 #[inline(always)]
-fn pack_center_and_init<'a>(
-    x: &[f32], y: &[f32],
-    f0_omega: f32, d_omega: f32,
-    sc: &mut LsScratch<'a>
+fn f32_from_q(q: i16) -> f32 {
+    const INV_SCALE: f32 = 1.0 / 32767.0;
+    (q as f32) * INV_SCALE
+}
+
+/// Scratch buffers for the uniform-grid accelerator, memory-reduced.
+/// All slices must have length >= number of valid (finite) samples.
+pub struct LsScratch<'a, const CAP: usize> {
+    /// packed (y - mean), kept in f32 for accuracy in accumulations
+    pub yv:  &'a mut [f32; CAP],
+    /// sin(ω_k t_i) current, quantized
+    pub s_w: &'a mut [i16; CAP],
+    /// cos(ω_k t_i) current, quantized
+    pub c_w: &'a mut [i16; CAP],
+    /// sin(Δω t_i), constant across k, quantized
+    pub s_d: &'a mut [i16; CAP],
+    /// cos(Δω t_i), constant across k, quantized
+    pub c_d: &'a mut [i16; CAP],
+}
+
+#[inline(always)]
+fn pack_center_and_init<const CAP: usize>(
+    x: &[f32],
+    y: &[f32],
+    f0_omega: f32,
+    d_omega: f32,
+    sc: &mut LsScratch<'_, CAP>,
 ) -> usize {
     // mean over finite
     let len = core::cmp::min(x.len(), y.len());
@@ -40,27 +64,26 @@ fn pack_center_and_init<'a>(
     if n == 0 { return 0; }
     let mean_y = sum_y / (n as f32);
 
-    // pack & precompute sin/cos at ω0 t and Δω t
+    // pack & precompute sin/cos at ω0 t and Δω t (quantized)
     let mut j = 0usize;
     for i in 0..len {
         let (ti, yi) = unsafe { (*x.get_unchecked(i), *y.get_unchecked(i)) };
         if !(ti.is_finite() && yi.is_finite()) { continue; }
 
-        let yv = yi - mean_y;
-        sc.t[j]  = ti;
-        sc.yv[j] = yv;
+        sc.yv[j] = yi - mean_y;
 
         let a0 = f0_omega * ti;
         let (s0, c0) = libm::sincosf(a0);
-        sc.s_w[j] = s0;
-        sc.c_w[j] = c0;
+        sc.s_w[j] = q_from_f32(s0);
+        sc.c_w[j] = q_from_f32(c0);
 
-        let d  = d_omega * ti;
+        let d = d_omega * ti;
         let (sd, cd) = libm::sincosf(d);
-        sc.s_d[j] = sd;
-        sc.c_d[j] = cd;
+        sc.s_d[j] = q_from_f32(sd);
+        sc.c_d[j] = q_from_f32(cd);
 
         j += 1;
+        if j == CAP { break; } // hard cap safety
     }
     j
 }
@@ -69,15 +92,18 @@ fn pack_center_and_init<'a>(
 /// frequencies: f_k = f0 + k*df, for k in [0, m).
 /// Writes min(m, power_out.len()) powers.
 /// Returns number written.
+///
+/// Memory-optimized version:
+/// - stores sin/cos tables as i16 fixed-point
+/// - drops unused packed time buffer
 #[inline(always)]
-pub fn lombscargle_no_std(
+pub fn lombscargle_no_std<const CAP: usize>(
     x: &[f32],
     y: &[f32],
     f0: f32,
     df: f32,
     m: usize,
     power_out: &mut [f32],
-    sc: &mut LsScratch<'_>,
 ) -> usize {
     let m = core::cmp::min(m, power_out.len());
     if m == 0 { return 0; }
@@ -88,8 +114,24 @@ pub fn lombscargle_no_std(
     let omega0 = TWO_PI * f0;
     let domega = TWO_PI * df;
 
-    // Pack/center + init sin/cos tables
-    let n = pack_center_and_init(x, y, omega0, domega, sc);
+     // Use stack-allocated arrays instead of mutable statics.
+    let mut yv:  [f32; CAP] = [0.0; CAP];
+    let mut sw:  [i16; CAP] = [0; CAP];
+    let mut cw:  [i16; CAP] = [0; CAP];
+    let mut sd:  [i16; CAP] = [0; CAP];
+    let mut cd:  [i16; CAP] = [0; CAP];
+
+    // In your task (single-threaded over the buffers):
+    let mut sc = LsScratch {
+        yv:  &mut yv,
+        s_w: &mut sw,
+        c_w: &mut cw,
+        s_d: &mut sd,
+        c_d: &mut cd,
+    };
+
+    // Pack/center + init quantized sin/cos tables
+    let n = pack_center_and_init(x, y, omega0, domega, &mut sc);
     if n == 0 {
         for d in &mut power_out[..m] { *d = 0.0; }
         return m;
@@ -102,8 +144,8 @@ pub fn lombscargle_no_std(
         let (mut cs2, mut cc2) = (0.0f32, 0.0f32);
         // sin(2a)=2sc; cos(2a)=c^2-s^2
         for i in 0..n {
-            let s = unsafe { *sc.s_w.get_unchecked(i) };
-            let c = unsafe { *sc.c_w.get_unchecked(i) };
+            let s = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+            let c = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
             kahan_add(&mut s2, &mut cs2, 2.0 * s * c);
             kahan_add(&mut c2, &mut cc2, c * c - s * s);
         }
@@ -116,8 +158,8 @@ pub fn lombscargle_no_std(
         let (mut cc, mut ss)  = (0.0f32, 0.0f32);
 
         for i in 0..n {
-            let s = unsafe { *sc.s_w.get_unchecked(i) };
-            let c = unsafe { *sc.c_w.get_unchecked(i) };
+            let s = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+            let c = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
 
             // rotate (s,c) -> (s_shift, c_shift)
             let s_shift = s * c_tau - c * s_tau;
@@ -137,20 +179,19 @@ pub fn lombscargle_no_std(
 
         // --- Advance sin/cos to next frequency using angle addition with Δω
         // sin' = s*cΔ + c*sΔ ; cos' = c*cΔ - s*sΔ
-        // This avoids any sin/cos per-sample inside the loop over k.
         if k + 1 < m {
             for i in 0..n {
-                let s = unsafe { *sc.s_w.get_unchecked(i) };
-                let c = unsafe { *sc.c_w.get_unchecked(i) };
-                let sd = unsafe { *sc.s_d.get_unchecked(i) };
-                let cd = unsafe { *sc.c_d.get_unchecked(i) };
+                let s  = f32_from_q(unsafe { *sc.s_w.get_unchecked(i) });
+                let c  = f32_from_q(unsafe { *sc.c_w.get_unchecked(i) });
+                let sd = f32_from_q(unsafe { *sc.s_d.get_unchecked(i) });
+                let cd = f32_from_q(unsafe { *sc.c_d.get_unchecked(i) });
 
                 let s_next = s * cd + c * sd;
                 let c_next = c * cd - s * sd;
 
                 unsafe {
-                    *sc.s_w.get_unchecked_mut(i) = s_next;
-                    *sc.c_w.get_unchecked_mut(i) = c_next;
+                    *sc.s_w.get_unchecked_mut(i) = q_from_f32(s_next);
+                    *sc.c_w.get_unchecked_mut(i) = q_from_f32(c_next);
                 }
             }
         }
@@ -162,8 +203,6 @@ pub fn lombscargle_no_std(
 
 
 use core::cmp::min;
-
-use defmt::info;
 
 /// Solve A x = b in-place via Gaussian elimination with partial pivoting (no_std, f32).
 /// - `a` is an NxN matrix (only top-left n×n is used)
