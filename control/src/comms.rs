@@ -98,7 +98,7 @@ pub async fn task_comms(
         info!("[comm] waiting for request...");
         let select = select(
             channel_req.receive(), 
-            Timer::after_secs(u64::MAX)
+            Timer::after_secs(u32::MAX as u64)
         ).await;
         match select {
             Either::First(CommReqMsg::Send { sectors, config }) => {

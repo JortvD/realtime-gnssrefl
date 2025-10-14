@@ -73,7 +73,7 @@ pub fn date_to_str(days: u32) -> String<11> {
 
 pub fn parse_lat(lat_str: &str, northsouth_str: &str) -> Option<f32> {
     if lat_str.len() < 4 || northsouth_str.len() != 1 {
-        return None;
+        return Some(0.0);
     }
 
     let degrees = lat_str[0..2].parse::<f32>().ok()?;
@@ -92,7 +92,7 @@ pub fn parse_lat(lat_str: &str, northsouth_str: &str) -> Option<f32> {
 
 pub fn parse_lon(lon_str: &str, eastwest_str: &str) -> Option<f32> {
     if lon_str.len() < 5 || eastwest_str.len() != 1 {
-        return None;
+        return Some(0.0);
     }
 
     let degrees = lon_str[0..3].parse::<f32>().ok()?;
