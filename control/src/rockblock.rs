@@ -556,19 +556,22 @@ impl RockBlock9704 {
         Timer::after_secs(5).await;
 
         if !self.validate_api_version().await {
-            panic!("RockBlock 9704 not responding or invalid API version");
+            info!("RockBlock 9704 not responding or invalid API version");
+            return;
         }
 
         Timer::after_secs(5).await;
 
         if !self.valid_sim_interface().await {
-            panic!("RockBlock 9704 SIM interface not set to internal");
+            info!("RockBlock 9704 SIM interface not set to internal");
+            return;
         }
 
         Timer::after_secs(5).await;
 
         if !self.valid_operational_state().await {
-            panic!("RockBlock 9704 not in active state");
+            info!("RockBlock 9704 not in active state");
+            return;
             // code sets to active state if inactive
             // or to inactive and then active for other states
         }
