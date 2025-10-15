@@ -1,8 +1,9 @@
 use defmt::info;
 use embassy_rp::{gpio, uart};
 use embassy_time::{Instant, Timer};
+use heapless::Vec;
 
-use crate::{nmea::NmeaBurst, types::Nmealine};
+use crate::{nmea::NmeaBurst, types::Nmealine, GNSS_POST_UART_BAUDRATE, GNSS_PRE_UART_BAUDRATE};
 
 pub struct GNSSSensor {
     uart: uart::Uart<'static, uart::Async>,
@@ -15,6 +16,47 @@ pub struct UBXCommand {
     pub id: u8,
     pub length: u16,
     pub payload: [u8; 256],
+}
+
+pub struct CfgUpdateItem {
+    pub key: u32,
+    pub size: u8,
+    pub value: u32,
+}
+
+impl CfgUpdateItem {
+    pub fn new(key: u32, size: u8, value: u32) -> Self {
+        Self { key, size, value }
+    }
+
+    pub fn uart1_baudrate(baudrate: u32) -> Self {
+        Self {
+            key: 0x40520001,
+            size: 4,
+            value: baudrate,
+        }
+    }
+}
+
+pub struct CfgUpdateLayers {
+    pub ram_layer: bool,
+    pub bbr_layer: bool,
+    pub flash_layer: bool,
+}
+
+impl CfgUpdateLayers {
+    pub fn default() -> Self {
+        Self {
+            ram_layer: true,
+            bbr_layer: false,
+            flash_layer: false,
+        }
+    }
+}
+
+pub struct CfgUpdate {
+    pub layers: CfgUpdateLayers,
+    pub items: Vec<CfgUpdateItem, 128>,
 }
 
 fn checksum(command: &UBXCommand) -> u16 {
@@ -109,7 +151,7 @@ impl GNSSSensor {
 
     pub async fn sleep(&mut self) {
         if !self.awake {
-            info!("[meas] GNSS already asleep");
+            info!("[gnss] GNSS already asleep");
             return;
         }
 
@@ -117,25 +159,66 @@ impl GNSSSensor {
 
         Timer::after_secs(5).await;
 
-        info!("[meas] GNSS put to sleep");
+        info!("[gnss] GNSS put to sleep");
         self.awake = false;
     }
 
     pub async fn wake(&mut self) {
         if self.awake {
-            info!("[meas] GNSS already awake");
+            info!("[gnss] GNSS already awake");
             return;
         }
 
         self.pin_power.set_high();
 
-        Timer::after_secs(5).await;
+        Timer::after_secs(3).await;
 
-        info!("[meas] GNSS woke up");
+        self.uart.set_baudrate(GNSS_PRE_UART_BAUDRATE);
+
+        Timer::after_secs(1).await;
+
+        let uart_baudrate_item = CfgUpdateItem::uart1_baudrate(115200);
+        let items = [uart_baudrate_item];
+        let update = CfgUpdate {
+            layers: CfgUpdateLayers::default(),
+            items: Vec::from(items),
+        };
+        let cmd = self.cfg_valset(update);
+        self.send_ubx(cmd).await;
+        
+        Timer::after_secs(1).await;
+
+        self.uart.set_baudrate(GNSS_POST_UART_BAUDRATE);
+
+        info!("[gnss] GNSS woke up");
         self.awake = true;
     }
 
-    pub async fn rxm_pmreq(
+    pub fn cfg_valset(
+        &self,
+        value: CfgUpdate,
+    ) -> UBXCommand {
+        let mut payload = [0u8; 256];
+        payload[1] = (value.layers.ram_layer as u8)
+            | ((value.layers.bbr_layer as u8) << 1)
+            | ((value.layers.flash_layer as u8) << 2);
+
+        let mut offset = 4;
+        for item in value.items {
+            payload[offset..offset + 4].copy_from_slice(&item.key.to_le_bytes());
+            payload[offset + 4..offset + 4 + item.size as usize].copy_from_slice(&item.value.to_le_bytes());
+            offset += 4 + item.size as usize;
+        }
+
+        UBXCommand {
+            cls: 0x06,
+            id: 0x8A,
+            length: offset as u16,
+            payload,
+        }
+    }
+
+    pub fn rxm_pmreq(
         &self,
         duration: u32,
         backup: bool,

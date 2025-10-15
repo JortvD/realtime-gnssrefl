@@ -67,7 +67,8 @@ static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg,
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
-pub const GNSS_UART_BAUDRATE: u32 = 9_600;
+pub const GNSS_PRE_UART_BAUDRATE: u32 = 9_600;
+pub const GNSS_POST_UART_BAUDRATE: u32 = 115_200;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 
 bind_interrupts!(pub struct Irqs {
@@ -142,7 +143,7 @@ async fn main(spawner: Spawner) {
 
     // GNSS peripherals
     let mut gnss_uart_config = uart::Config::default();
-    gnss_uart_config.baudrate = GNSS_UART_BAUDRATE;
+    gnss_uart_config.baudrate = GNSS_PRE_UART_BAUDRATE;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
     let pin_gnss_power = Output::new(p.PIN_18, Level::Low);
     let mut gnss_sensor = GNSSSensor::new(gnss_uart, pin_gnss_power);
@@ -163,7 +164,6 @@ async fn main(spawner: Spawner) {
 
     info!("[main] Turning off GNSS");
     gnss_sensor.sleep().await;
-    info!("[main] GNSS powered off");
 
     info!("[main] Turning off RockBlock");
     rockblock.power_off().await;
