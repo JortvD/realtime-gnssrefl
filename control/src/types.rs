@@ -71,8 +71,8 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn get_mid_times_as_str(&self) -> String<128> {
-        let mut mid_times_str = String::<128>::new();
+    pub fn get_mid_times_as_str(&self) -> String<512> {
+        let mut mid_times_str = String::<512>::new();
         for (idx, &midpoint) in self.sector_mid_times.iter().enumerate() {
             let time_str = utils::seconds_to_time_str(midpoint);
             mid_times_str.push_str(&time_str).unwrap();
