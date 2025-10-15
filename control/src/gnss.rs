@@ -134,7 +134,7 @@ impl GNSSSensor {
             }   
 
             if !error_in_line {
-                info!("{}", line.as_str());
+                // info!("{}", line.as_str());
                 nmeaburst.push(line);
             }
 
@@ -186,7 +186,6 @@ impl GNSSSensor {
         Timer::after_secs(1).await;
 
         let mut items = Vec::<CfgUpdateItem, 128>::new();
-        items.push(CfgUpdateItem::nmea_highprec(true)).ok();
         items.push(CfgUpdateItem::uart1_baudrate(GNSS_POST_UART_BAUDRATE)).ok();
         let update = CfgUpdate {
             layers: CfgUpdateLayers::default(),
