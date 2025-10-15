@@ -8,7 +8,7 @@ pub async fn dump(storage: &'static StorageType) {
     let storage = storage_lock.as_mut().expect("Storage should be initialized");
 
     let sector_storage = SectorStorage::new();
-    let sectors = sector_storage.load(storage);
+    let sectors = sector_storage.load(storage, false);
     if let Ok(sectors) = sectors {
         info!("SECTOR:idx, uid, state, midpoint_idx, measurement_idx, start_bin_idx, start_time, lat, lon");
         for (i, sector) in sectors.iter().enumerate() {
@@ -27,8 +27,8 @@ pub async fn dump(storage: &'static StorageType) {
         }
     }
 
-    info!("MEASUREMENT:idx, uid, mean, std, num_seen, start_time, end_time");
-    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs, lat, lon");
+    info!("MEASUREMENT:idx, uid, mean, std, num_seen, start_time, end_time, lat, lon");
+    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs");
     let measurement_storage = MeasurementStorage::new();
     for i in 0..NUM_MEASUREMENTS {
         if let Some(measurement) = measurement_storage.read(storage, i as u32) {

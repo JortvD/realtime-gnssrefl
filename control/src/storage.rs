@@ -170,11 +170,11 @@ impl SectorStorage {
         Self {}
     }
 
-    pub fn load(&self, storage: &mut FlashStorage) -> Result<SectorList, Error> {
+    pub fn load(&self, storage: &mut FlashStorage, update: bool) -> Result<SectorList, Error> {
         let mut buffer = [0u8; SECTOR_LIST_SIZE];
         storage.read(SECTOR_CONTAINER_START, 0, &mut buffer)?;
 
-        Ok(SectorList::from_bytes(&buffer).ok_or(Error::Other)?)
+        Ok(SectorList::from_bytes(&buffer, update).ok_or(Error::Other)?)
     }
 
     pub fn save(&self, storage: &mut FlashStorage, sectors: &SectorList) -> Result<(), Error> {
