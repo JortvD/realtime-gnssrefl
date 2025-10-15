@@ -62,7 +62,7 @@ pub struct Config {
     pub qc_min_elevation_range: u32,
     pub qc_iqr_size: f32,
 
-    pub sector_mid_times: Vec<u32, 24>,
+    pub sector_mid_times: Vec<u32, 64>,
 
     pub bins_per_sector: u32,
     pub seconds_per_bin: u32,
@@ -90,7 +90,7 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut mid_times = Vec::<u32, 24>::new();
+        let mut mid_times = Vec::<u32, 64>::new();
         // mid_times.push(utils::time_str_to_seconds("14:48:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("11:10:00").unwrap()).unwrap();
