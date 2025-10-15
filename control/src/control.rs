@@ -4,7 +4,7 @@ use defmt::{error, info};
 use embassy_time::Timer;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
-use embassy_futures::select::{select4, Either4};
+use embassy_futures::select::{select5, Either5};
 
 use crate::realtime::RealTime;
 use crate::messages::{MeasureReqMsg, ComputeReqMsg, CommReqMsg, MonReqMsg, MeasureResMsg, ComputeResMsg, CommResMsg, MonResMsg};
@@ -40,6 +40,10 @@ pub async fn task_control(
     let mut sectors: SectorList;
     let mut sleep_until: Option<u32> = None;
     let sector_storage = SectorStorage::new();
+
+    // Latest battery and temperature
+    let mut battery_mv: Option<u32> = None;
+    let mut chip_c: Option<f32> = None;
 
     {
         let mut storage_lock = storage.lock().await;
@@ -108,7 +112,11 @@ pub async fn task_control(
                 sectors_to_send.push(sector.clone()).expect("Should fit");
             }
             info!("[cont] requesting communication for {} sectors", sectors_to_send.len());
-            comm_request_channel.send(CommReqMsg::Send { sectors: sectors_to_send, config: config.clone() }).await;
+            comm_request_channel.send(CommReqMsg::Send { 
+                sectors: sectors_to_send, 
+                config: config.clone(), 
+                battery_mv: battery_mv, 
+                temp_c: chip_c }).await;
         }
 
         // Wait for responses
@@ -122,14 +130,15 @@ pub async fn task_control(
 
         info!("[cont] waiting for events or next timer");
 
-        let result = select4(
+        let result = select5(
             &mut timer,
             measure_response_channel.receive(),
             compute_response_channel.receive(),
             comm_response_channel.receive(),
+            mon_response_channel.receive()
         ).await;
         match result {
-            Either4::First(_) => {
+            Either5::First(_) => {
                 info!("[cont] next sector timer expired, getting next sector");
                 let sector_awaiting_idx = sectors.get_idx_for_state(SectorState::AWAITING);
                 if let Some(idx) = sector_awaiting_idx {
@@ -143,7 +152,7 @@ pub async fn task_control(
                     info!("No sector in AWAITING state when timer expired");
                 }
             }
-            Either4::Second(measure_res_msg) => {
+            Either5::Second(measure_res_msg) => {
                 match measure_res_msg {
                     MeasureResMsg::RefTimeSuccess { deviation, date} => {
                         info!("[cont] received reference time from GNSS");
@@ -176,7 +185,7 @@ pub async fn task_control(
                     }
                 }
             }
-            Either4::Third(compute_res_msg) => {
+            Either5::Third(compute_res_msg) => {
                 match compute_res_msg {
                     ComputeResMsg::Success { sector_uid } => {
                         info!("[cont] received computation success from core 1");
@@ -191,7 +200,7 @@ pub async fn task_control(
                     }
                 }
             }
-            Either4::Fourth(comm_res_msg) => {
+            Either5::Fourth(comm_res_msg) => {
                 match comm_res_msg {
                     CommResMsg::Success { sector_uids } => {
                         info!("[cont] received communication success from core 1");
@@ -207,6 +216,14 @@ pub async fn task_control(
                             sector.state = SectorState::TO_COMMUNICATE;
                         }
                     }
+                }
+            }
+            Either5::Fifth(mon_res_msg) => {
+                match mon_res_msg {
+                    MonResMsg::BatVoltSuccess { voltage } => battery_mv = Some(voltage),
+                    MonResMsg::BatVoltFail => battery_mv = None,
+                    MonResMsg::TempSuccess { temp_c } => chip_c = Some(temp_c),
+                    MonResMsg::TempFail => chip_c = None,
                 }
             }
         }
