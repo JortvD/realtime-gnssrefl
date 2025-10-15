@@ -29,11 +29,11 @@ pub async fn task_monitor(
                 let start = Instant::now();
                 match battery.get_battery_voltage().await {
                     Ok(volts) => {
-                        battery_mv = calc_emwa(volts as f32, battery_mv, 0.05, 0.0, 4200.0);
+                        battery_mv = calc_emwa(volts as f32, battery_mv, 0.02, 0.0, 4200.0);
                         info!("[moni] Battery millivolts {} (emwa {}) in {} ms", volts, battery_mv as u32, (Instant::now() - start).as_millis());
                         channel_res.send(MonResMsg::BatVoltSuccess { voltage: battery_mv as u32 }).await;
                     }
-                    Err(e) => {
+                    Err(_) => {
                         channel_res.send(MonResMsg::BatVoltFail).await;
                     }
                 }
@@ -41,16 +41,16 @@ pub async fn task_monitor(
                 let start = Instant::now();
                 match battery.get_chip_temperature().await {
                     Ok(temp) => {
-                        chip_temp_c = calc_emwa(temp, chip_temp_c, 0.05, -50.0, 85.0);
+                        chip_temp_c = calc_emwa(temp, chip_temp_c, 0.02, -50.0, 85.0);
                         info!("[moni] Chip temperature: {} (emwa {}) in {} ms", temp, chip_temp_c, (Instant::now() - start).as_millis());
                         channel_res.send(MonResMsg::TempSuccess { temp_c: chip_temp_c }).await;
                     }
-                    Err(e) => {
+                    Err(_) => {
                         channel_res.send(MonResMsg::TempFail).await;
                     }
                 }
 
-                next_adc_measurement = next_adc_measurement.saturating_add(Duration::from_secs(10));
+                next_adc_measurement = next_adc_measurement.saturating_add(Duration::from_secs(30));
             }
             Either::Second(message) => {
                 match message {

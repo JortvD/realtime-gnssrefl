@@ -176,7 +176,7 @@ impl SectorList {
         self.sectors.iter()
     }
 
-    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+    pub fn from_bytes(data: &[u8], update: bool) -> Option<Self> {
         let mut sectors = Vec::<Sector, MAX_SECTORS>::new();
         if &data[0..4] != b"SECT" {
             return None;
@@ -187,24 +187,26 @@ impl SectorList {
             let end = start + SECTOR_SIZE;
             let mut sector = Sector::from_byes(&data[start..end]);
 
-            match sector.state {
-                SectorState::AWAITING | SectorState::TO_MEASURE | SectorState::MEASURING => {
-                    info!("[sect] loaded sector {} in state {:?}, deleting", sector.get_uid(), sector.state);
-                    continue;
+            if update {
+                match sector.state {
+                    SectorState::AWAITING | SectorState::TO_MEASURE | SectorState::MEASURING => {
+                        info!("[sect] loaded sector {} in state {:?}, deleting", sector.get_uid(), sector.state);
+                        continue;
+                    }
+                    SectorState::COMPUTING => {
+                        sector.state = SectorState::TO_COMPUTE;
+                        info!("[sect] loaded sector {} in state {:?}, setting to TO_COMPUTE", sector.get_uid(), sector.state);
+                    }
+                    SectorState::COMMUNICATING => {
+                        sector.state = SectorState::TO_COMMUNICATE;
+                        info!("[sect] loaded sector {} in state {:?}, setting to TO_COMMUNICATE", sector.get_uid(), sector.state);
+                    }
+                    SectorState::DONE => {
+                        info!("[sect] loaded sector {} in state {:?}, deleteing", sector.get_uid(), sector.state);
+                        continue;
+                    }
+                    _ => { /* keep state as is */ }
                 }
-                SectorState::COMPUTING => {
-                    sector.state = SectorState::TO_COMPUTE;
-                    info!("[sect] loaded sector {} in state {:?}, setting to TO_COMPUTE", sector.get_uid(), sector.state);
-                }
-                SectorState::COMMUNICATING => {
-                    sector.state = SectorState::TO_COMMUNICATE;
-                    info!("[sect] loaded sector {} in state {:?}, setting to TO_COMMUNICATE", sector.get_uid(), sector.state);
-                }
-                SectorState::DONE => {
-                    info!("[sect] loaded sector {} in state {:?}, deleteing", sector.get_uid(), sector.state);
-                    continue;
-                }
-                _ => { /* keep state as is */ }
             }
 
             sectors.push(sector).expect("Should fit");

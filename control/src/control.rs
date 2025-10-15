@@ -55,7 +55,7 @@ pub async fn task_control(
     {
         let mut storage_lock = storage.lock().await;
         let storage = storage_lock.as_mut().expect("Storage should be initialized");
-        let result = sector_storage.load(storage);
+        let result = sector_storage.load(storage, true);
         if let Ok(loaded_sectors) = result {
             sectors = loaded_sectors;
             info!("[cont] loaded {} sectors from storage", sectors.len());

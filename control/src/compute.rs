@@ -296,7 +296,7 @@ async fn run_compute(
         }
 
         let start = Instant::now();
-        lombscargle_no_std::<{ BURST_SIZE * MAX_BINS }>(&elevs, &snrs, config.min_relative_height, config.relative_height_step_size, size, &mut ampls).await;
+        lombscargle_no_std::<{ BIN_BURST_SIZE * MAX_BINS }>(&elevs, &snrs, config.min_relative_height, config.relative_height_step_size, size, &mut ampls).await;
         info!(
             "[comp][{:03}/{:03}] Lomb-Scargle in {} ms",
             idx,
