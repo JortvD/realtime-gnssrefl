@@ -91,7 +91,7 @@ impl Scheduler {
 
     fn get_first_sector_midpoint_index(&self, config: &Config, now: u32) -> u32 {
         let half_measure_duration = config.get_measure_duration() / 2;
-        let sector_start_times: Vec<u32, 24> = config
+        let sector_start_times: Vec<u32, MAX_MIDPOINTS> = config
             .sector_mid_times
             .iter()
             .map(|&midpoint| RealTime::subtract_wrapping(midpoint , half_measure_duration))

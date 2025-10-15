@@ -39,6 +39,8 @@ pub const MEASUREMENT_STORAGE_SIZE: usize = BLOCK_SIZE; // 4KB
 
 pub const WARMUP_TIME: u32 = 30;
 
+pub const MAX_MIDPOINTS: usize = 128;
+
 pub type Sample = u32;
 pub type Burst = Vec<Sample, BURST_SIZE>;
 pub type Bin = Vec<Burst, BIN_BURST_SIZE>;
@@ -62,7 +64,7 @@ pub struct Config {
     pub qc_min_elevation_range: u32,
     pub qc_iqr_size: f32,
 
-    pub sector_mid_times: Vec<u32, 64>,
+    pub sector_mid_times: Vec<u32, MAX_MIDPOINTS>,
 
     pub bins_per_sector: u32,
     pub seconds_per_bin: u32,
@@ -71,8 +73,8 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn get_mid_times_as_str(&self) -> String<512> {
-        let mut mid_times_str = String::<512>::new();
+    pub fn get_mid_times_as_str(&self) -> String<{MAX_MIDPOINTS * 12}> {
+        let mut mid_times_str = String::<{MAX_MIDPOINTS * 12}>::new();
         for (idx, &midpoint) in self.sector_mid_times.iter().enumerate() {
             let time_str = utils::seconds_to_time_str(midpoint);
             mid_times_str.push_str(&time_str).unwrap();
@@ -90,7 +92,7 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut mid_times = Vec::<u32, 64>::new();
+        let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
         // mid_times.push(utils::time_str_to_seconds("14:48:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("11:10:00").unwrap()).unwrap();
