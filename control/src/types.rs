@@ -92,17 +92,37 @@ impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, 24>::new();
         // mid_times.push(utils::time_str_to_seconds("14:48:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:10:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:10:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:50:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:06:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:12:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:18:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:24:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:10:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:20:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("13:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:36:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:42:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:48:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:54:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:50:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:10:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:10:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
 
         // mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("03:00:00").unwrap()).unwrap();
@@ -117,26 +137,26 @@ impl Default for Config {
         // mid_times.push(utils::time_str_to_seconds("21:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("23:00:00").unwrap()).unwrap();
         Self {
-            pre_min_elevation: 10,
-            pre_max_elevation: 30,
-            pre_min_azimuth: 50,
-            pre_max_azimuth: 150,
+            pre_min_elevation: 5,
+            pre_max_elevation: 40,
+            pre_min_azimuth: 90,
+            pre_max_azimuth: 270,
 
-            post_min_elevation: 10,
+            post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 50,
-            post_max_azimuth: 150,
+            post_min_azimuth: 90,
+            post_max_azimuth: 270,
 
             min_relative_height: 0.5,
             max_relative_height: 10.0,
-            relative_height_step_size: 0.5,
+            relative_height_step_size: 0.2,
 
             qc_min_elevation_range: 0,
             qc_iqr_size: 1.5,
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 1,
+            bins_per_sector: 2,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
