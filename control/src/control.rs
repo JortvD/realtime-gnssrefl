@@ -12,6 +12,13 @@ use crate::storage::SectorStorage;
 use crate::types::{Config, Sector, SectorList, SectorState, MAX_SECTORS};
 use crate::{scheduler::*, StorageType};
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum RealtimeStatus {
+    NotAvailable = 0,
+    Requested = 1,
+    Available = 2,
+}
+
 #[embassy_executor::task]
 pub async fn task_control(
     measure_request_channel: &'static Channel<CriticalSectionRawMutex, MeasureReqMsg, 8>,
@@ -36,7 +43,7 @@ pub async fn task_control(
     let scheduler = Scheduler::new();
 
     // List of tasks
-    let mut realtime_available = false;
+    let mut realtime_status = RealtimeStatus::NotAvailable;
     let mut sectors: SectorList;
     let mut sleep_until: Option<u32> = None;
     let sector_storage = SectorStorage::new();
@@ -73,9 +80,12 @@ pub async fn task_control(
 
     loop {
         // Send out tasks
-        if !realtime_available {
+        if realtime_status == RealtimeStatus::NotAvailable {
             info!("[cont] requesting reference time from GNSS");
+            realtime_status = RealtimeStatus::Requested;
             measure_request_channel.send(MeasureReqMsg::GetRefTime).await;
+        } else if realtime_status == RealtimeStatus::Requested {
+            // waiting for response
         } else if let Some(index) = sectors.get_idx_for_state(SectorState::TO_MEASURE) {
             let measuring_idxs: Vec<usize, MAX_SECTORS> = sectors.get_idxs_for_state(SectorState::MEASURING);
 
@@ -158,7 +168,7 @@ pub async fn task_control(
                         info!("[cont] received reference time from GNSS");
                         realtime.update_time(deviation);
                         realtime.update_date(date);
-                        realtime_available = true;
+                        realtime_status = RealtimeStatus::Available;
                         let (first_sector, first_start_time) = scheduler.get_first_sector(&config, &realtime);
                         sleep_until = Some(first_start_time);
                         sectors.push(first_sector);

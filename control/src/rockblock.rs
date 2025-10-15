@@ -618,7 +618,7 @@ impl RockBlock9704 {
                     break;
                 }
 
-                Timer::after_millis(100).await;
+                Timer::after_millis(10).await;
 
                 i += 1;
                 if i > MAX_POWER_ON_ITERATIONS {
