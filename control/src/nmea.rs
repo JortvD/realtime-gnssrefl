@@ -190,6 +190,7 @@ impl NMEAParser {
             "GA" => Some(1),
             "GB" => Some(2),
             "GL" => Some(3),
+            "GQ" => Some(4),
             _ => None,
         };
     }
@@ -211,9 +212,10 @@ impl NMEAParser {
 
     fn number_to_band(&mut self, num: u32) -> u32 {
         match num {
+            0 => 0,
             1 => 0,
             5 => 1,
-            7 => 1,
+            7 => 0,
             8 => 1,
             _ => 0,
         }

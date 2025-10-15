@@ -3,14 +3,14 @@ use embassy_futures::yield_now;
 use embassy_time::Instant;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
-use libm::{sinf, sqrtf};
+use libm::{powf, sinf, sqrtf};
 
 use crate::StorageType;
 use crate::storage::{FlashStorage, BinStorage, MeasurementStorage};
 use crate::types::{Config, Sector, BIN_BURST_SIZE, BURST_SIZE};
 use crate::messages::{ComputeReqMsg, ComputeResMsg};
 use crate::types::{Measurement, Observation};
-use crate::math::{quicksort_xy, lombscargle_no_std, polyfit_and_smooth_no_std};
+use crate::math::{detrend_no_std, lombscargle_no_std, polyfit_and_smooth_no_std, quicksort_xy};
 
 const ARC_GAP: u16 = 120;
 const C_M_S: f32 = 299_792_458.0;
@@ -225,7 +225,6 @@ async fn run_compute(
             continue;
         }
 
-
         // Make sure elevation is smooth over time
         let start = Instant::now();
         polyfit_and_smooth_no_std(&times, &mut elevs);
@@ -249,14 +248,35 @@ async fn run_compute(
             band
         );
 
-        // Transform samples: x = sin(e)/cf, y = snr.
+        // Transform elevation e = sin(e)/cf,
         let start = Instant::now();
-        transform_xy(&mut elevs, cf);
+        transform_elevs(&mut elevs, cf);
         info!(
-            "[comp][{:03}/{:03}] computed {} transformed samples in {} ms",
+            "[comp][{:03}/{:03}] computed {} transformed elevations in {} ms",
             idx,
             total_arcs,
             elevs.len(),
+            (Instant::now() - start).as_millis()
+        );
+
+        // Transform snrs snr = 10^(snr/20)
+        let start = Instant::now();
+        transform_snrs(&mut snrs);
+        info!(
+            "[comp][{:03}/{:03}] computed {} transformed snrs in {} ms",
+            idx,
+            total_arcs,
+            snrs.len(),
+            (Instant::now() - start).as_millis()
+        );
+
+        // Detrend the SNR
+        let start = Instant::now();
+        detrend_no_std(&elevs, &mut snrs);
+        info!(
+            "[comp][{:03}/{:03}] detrended SNR in {} ms",
+            idx,
+            total_arcs,
             (Instant::now() - start).as_millis()
         );
 
@@ -414,9 +434,10 @@ fn compute_cf(net: u8, band: bool) -> (f32, f32) {
 fn network_band_to_frequency(network: u8, band: bool) -> f32 {
     match network {
         0 => if !band { 1575.42e6 } else { 1176.45e6 },
-        1 => if !band { 1602.00e6 } else { 1602.00e6 },
+        1 => if !band { 1603.69e6 } else { 1603.69e6 },
         2 => if !band { 1575.42e6 } else { 1176.45e6 },
         3 => if !band { 1561.098e6 } else { 1176.45e6 },
+        4 => if !band { 1575.42e6 } else { 1176.45e6 },
         _ => 1.0,
     }
 }
@@ -437,11 +458,18 @@ fn lin_range(start: f32, end: f32, step_size: f32) -> (Vec<f32, 512>, usize) {
 }
 
 #[inline]
-fn transform_xy(elevs: &mut SampleVec, cf: f32) {
+fn transform_elevs(elevs: &mut SampleVec, cf: f32) {
     let inv_cf = 1.0 / cf;
     for i in 0..elevs.len() {
         let s = sinf(elevs[i].to_radians()) * inv_cf;
         elevs[i] = s;
+    }
+}
+
+#[inline]
+fn transform_snrs(snrs: &mut SampleVec) {
+    for i in 0..snrs.len() {
+        snrs[i] = powf(10.0, snrs[i] / 20.0);
     }
 }
 

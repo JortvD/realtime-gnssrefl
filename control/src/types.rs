@@ -70,6 +70,7 @@ pub struct Config {
     pub seconds_per_bin: u32,
 
     pub num_send_measurements: u32,
+    pub measure_timeout: u32,
 }
 
 impl Config {
@@ -162,6 +163,7 @@ impl Default for Config {
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
+            measure_timeout: 60,
         }
     }
 }

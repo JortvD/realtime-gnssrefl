@@ -84,7 +84,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
     let mut parser = NMEAParser::new_from_config(config);
 
     loop {
-        let nmeaburst= with_timeout(Duration::from_secs(30), gnss_sensor.read_burst()).await.map_err(|_| SectorFailError::Timeout)?;
+        let nmeaburst= with_timeout(Duration::from_secs(config.measure_timeout as u64), gnss_sensor.read_burst()).await.map_err(|_| SectorFailError::Timeout)?;
         let burst = parser.parse_burst(&nmeaburst, false);
         let time_str = seconds_to_time_str(burst.time);
 

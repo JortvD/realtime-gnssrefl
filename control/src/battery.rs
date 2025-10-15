@@ -41,7 +41,7 @@ impl Battery {
     }
 
     pub async fn get_battery_voltage(&mut self) -> Result<u32, adc::Error> {
-        const NUM_SAMPLES: usize = 1;
+        const NUM_SAMPLES: usize = 5;
         const SAMPLE_DELAY_MS: u64 = 10;
 
         let mut sum: u32 = 0;
@@ -73,7 +73,7 @@ impl Battery {
     }
 
     pub async fn get_chip_temperature(&mut self) -> Result<f32, adc::Error> {
-        const NUM_SAMPLES: usize = 1;
+        const NUM_SAMPLES: usize = 5;
         const SAMPLE_DELAY_MS: u64 = 10;
 
         let mut sum: u32 = 0;
