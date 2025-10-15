@@ -149,13 +149,23 @@ pub const SECTOR_LIST_SIZE: usize = SECTOR_LIST_HEADER_SIZE + MAX_SECTORS * SECT
 
 pub struct SectorList {
     sectors: Vec<Sector, MAX_SECTORS>,
+    changed: bool,
 }
 
 impl SectorList {
     pub fn new() -> Self {
         Self {
             sectors: Vec::new(),
+            changed: false,
         }
+    }
+
+    pub fn set_changed(&mut self, changed: bool) {
+        self.changed = changed;
+    }
+
+    pub fn has_changed(&self) -> bool {
+        self.changed
     }
 
     pub fn len(&self) -> usize {
@@ -201,6 +211,7 @@ impl SectorList {
         }
         Some(Self {
             sectors,
+            changed: false,
         })
     }
 

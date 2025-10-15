@@ -100,6 +100,7 @@ pub async fn task_control(
             let sector = sectors.get_mut(index);
             sector.state = SectorState::MEASURING;
             measure_request_channel.send(MeasureReqMsg::MeasureSector { sector: sector.clone(), config: config.clone(), sleep_gnss }).await;
+            sectors.set_changed(true);
         }
 
         let list_to_compute = sectors.get_idxs_for_state(SectorState::TO_COMPUTE);
@@ -110,6 +111,7 @@ pub async fn task_control(
                 sector.state = SectorState::COMPUTING;
                 compute_request_channel.send(ComputeReqMsg::Compute { sector: sector.clone(), config: config.clone() }).await;
             }
+            sectors.set_changed(true);
         }
 
         let list_to_communicate = sectors.get_idxs_for_state(SectorState::TO_COMMUNICATE);
@@ -121,6 +123,7 @@ pub async fn task_control(
                 sector.state = SectorState::COMMUNICATING;
                 sectors_to_send.push(sector.clone()).expect("Should fit");
             }
+            sectors.set_changed(true);
             info!("[cont] requesting communication for {} sectors", sectors_to_send.len());
             comm_request_channel.send(CommReqMsg::Send { 
                 sectors: sectors_to_send, 
@@ -130,7 +133,7 @@ pub async fn task_control(
         }
 
         // Wait for responses
-        save_sectors(storage, &sectors).await;
+        save_sectors(storage, &mut sectors).await;
 
         let mut timer = if let Some(st) = sleep_until {
             realtime.get_timer(st)
@@ -158,6 +161,7 @@ pub async fn task_control(
                     let (next_sector, next_start_time) = scheduler.get_next_sector(&config, &realtime, sector);
                     sleep_until = Some(next_start_time);
                     sectors.push(next_sector);
+                        sectors.set_changed(true);
                 } else {
                     info!("No sector in AWAITING state when timer expired");
                 }
@@ -172,6 +176,7 @@ pub async fn task_control(
                         let (first_sector, first_start_time) = scheduler.get_first_sector(&config, &realtime);
                         sleep_until = Some(first_start_time);
                         sectors.push(first_sector);
+                        sectors.set_changed(true);
                     },
                     MeasureResMsg::RefTimeFail {} => {
                         info!("[cont] getting ref time failed");
@@ -183,6 +188,7 @@ pub async fn task_control(
                         sector.state = SectorState::TO_COMPUTE;
                         realtime.update_time(result.deviation);
                         sector.update_coords(result.lat, result.lon);
+                        sectors.set_changed(true);
                     },
                     MeasureResMsg::SectorFail { sector_uid, error } => {
                         error!("Measurement failed: {:?}", error);
@@ -192,6 +198,7 @@ pub async fn task_control(
                             sector.get_uid()
                         };
                         sectors.delete_uid(sector_uid_to_delete);
+                        sectors.set_changed(true);
                     }
                 }
             }
@@ -201,12 +208,14 @@ pub async fn task_control(
                         info!("[cont] received computation success from core 1");
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMMUNICATE;
+                        sectors.set_changed(true);
                     }
                     ComputeResMsg::ComputeFail { sector_uid, error } => {
                         error!("Computation failed: {}", error);
                         // recompute
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMPUTE;
+                        sectors.set_changed(true);
                     }
                 }
             }
@@ -217,6 +226,7 @@ pub async fn task_control(
                         for &sector_uid in sector_uids.iter() {
                             sectors.delete_uid(sector_uid);
                         }
+                        sectors.set_changed(true);
                     }
                     CommResMsg::Fail { sector_uids, error } => {
                         error!("Communication failed: {:?}", error);
@@ -225,6 +235,7 @@ pub async fn task_control(
                             let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                             sector.state = SectorState::TO_COMMUNICATE;
                         }
+                        sectors.set_changed(true);
                     }
                 }
             }
@@ -240,11 +251,16 @@ pub async fn task_control(
     }
 }
 
-pub async fn save_sectors(storage: &'static StorageType, sectors: &SectorList) {
+pub async fn save_sectors(storage: &'static StorageType, sectors: &mut SectorList) {
     if sectors.len() == 0 {
-        info!("[cont] no sectors to save");
+        info!("[cont] no sectors to save, not saving");
         return;
     }
+    if sectors.has_changed() == false {
+        info!("[cont] no changes to sectors, not saving");
+        return;
+    }
+    sectors.set_changed(false);
     info!("[cont] saving {} sectors to storage", sectors.len());
     let mut storage_lock = storage.lock().await;
     let storage = storage_lock.as_mut().expect("Storage should be initialized");
