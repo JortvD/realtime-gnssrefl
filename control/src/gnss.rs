@@ -36,6 +36,14 @@ impl CfgUpdateItem {
             value: baudrate,
         }
     }
+
+    pub fn nmea_highprec(enable: bool) -> Self {
+        Self {
+            key: 0x10930006,
+            size: 1,
+            value: enable as u32,
+        }
+    }
 }
 
 pub struct CfgUpdateLayers {
@@ -126,7 +134,7 @@ impl GNSSSensor {
             }   
 
             if !error_in_line {
-                // info!("{}", line.as_str());
+                info!("{}", line.as_str());
                 nmeaburst.push(line);
             }
 
@@ -177,8 +185,9 @@ impl GNSSSensor {
 
         Timer::after_secs(1).await;
 
-        let uart_baudrate_item = CfgUpdateItem::uart1_baudrate(115200);
-        let items = [uart_baudrate_item];
+        let mut items = Vec::<CfgUpdateItem, 128>::new();
+        items.push(CfgUpdateItem::uart1_baudrate(GNSS_POST_UART_BAUDRATE)).ok();
+        items.push(CfgUpdateItem::nmea_highprec(true)).ok();
         let update = CfgUpdate {
             layers: CfgUpdateLayers::default(),
             items: Vec::from(items),
