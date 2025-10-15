@@ -14,6 +14,12 @@ use crate::StorageType;
 
 const MEASUREMENT_PACKET_SIZE: usize = 6; // bytes
 const PACKET_HEADER_SIZE: usize = 4; // bytes
+const MAX_STANDARD_DEVIATION: f32 = 1.0;
+const MAX_RELATIVE_HEIGHT: f32 = 20.0;
+const MIN_TEMPERATURE_C: f32 = -30.0;
+const MAX_TEMPERATURE_C: f32 = 80.0;
+const MIN_BATTERY_MV: u32 = 2000;
+const MAX_BATTERY_MV: u32 = 5000;
 
 pub struct MeasurementPacket {
     uid: u8,
@@ -101,7 +107,7 @@ pub async fn task_comms(
             Timer::after_secs(u32::MAX as u64)
         ).await;
         match select {
-            Either::First(CommReqMsg::Send { sectors, config }) => {
+            Either::First(CommReqMsg::Send { sectors, config, battery_mv, temp_c }) => {
                 let mut uids: [u32; MAX_SECTORS] = [0; MAX_SECTORS];
                 let mut count = 0;
                 for s in sectors.iter() {
@@ -109,7 +115,13 @@ pub async fn task_comms(
                     count += 1;
                 }
                 info!("[comm] starting communication for sectors {:?}", &uids[..count]);
-                let result = run_comms(&mut rockblock, storage, sectors, config.num_send_measurements).await;
+                let result = run_comms(
+                    &mut rockblock, 
+                    storage, 
+                    sectors, 
+                    config.num_send_measurements, 
+                    battery_mv, 
+                    temp_c).await;
                 if result.is_err() {
                     info!("[comm] communication failed");
                     channel_res.send(CommResMsg::Fail { 
@@ -140,6 +152,8 @@ async fn run_comms(
     storage: &'static StorageType,
     sectors: Vec<Sector, MAX_SECTORS>,
     num_measurements: u32,
+    battery_mv: Option<u32>,
+    temp_c: Option<f32>
 ) -> Result<(), CommsError> {
     info!("[comm] Turning on RockBlock");
     rockblock.power_on().await;
@@ -158,9 +172,19 @@ async fn run_comms(
     }
     info!("[comm] RockBlock ready, preparing packet");
 
+    let scaled_bat_mv = match battery_mv {
+        Some(mv) => u32_to_u8(mv, MIN_BATTERY_MV, MAX_BATTERY_MV),
+        None => 0
+    }; 
+
+    let scaled_temp_c = match temp_c {
+        Some(c) => f32_to_u8(c, MIN_TEMPERATURE_C, MAX_TEMPERATURE_C),
+        None => 0
+    }; 
+
     let mut packet = Packet::new(
-        1,
-        0,
+        scaled_bat_mv ,
+        scaled_temp_c,
         0, 
         0
     );
@@ -255,8 +279,8 @@ async fn get_measurement_packet(storage: &'static StorageType, measurement_index
     let measurement = measurement.unwrap();
     let packet_measurement = MeasurementPacket::new(
         (measurement.uid % 256) as u8,
-        mean_f32_to_u16(measurement.mean, 20.0),
-        std_f32_to_u8(measurement.std, 1.0),
+        mean_f32_to_u16(measurement.mean, MAX_RELATIVE_HEIGHT),
+        f32_to_u8(measurement.std, 0.0, MAX_STANDARD_DEVIATION),
         measurement.observations.len() as u8,
         measurement.num_seen as u8,
     );
@@ -281,16 +305,30 @@ fn mean_f32_to_u16(value: f32, max: f32) -> u16 {
     scaled as u16
 }
 
-fn std_f32_to_u8(value: f32, max: f32) -> u8 {
-    if value < 0.0 {
+pub fn f32_to_u8(value: f32, min: f32, max: f32) -> u8 {
+    if value <= min {
         return 0;
     }
-    if value > max {
+    if value >= max {
         return 255;
     }
-    let scaled = (value / max) * 255.0;
-    scaled as u8
+    let scaled = ((value - min) / (max - min)) * 255.0;
+    (scaled + 0.5) as u8
 }
+
+pub fn u32_to_u8(value: u32, min: u32, max: u32) -> u8 {
+    if value <= min {
+        return 0;
+    }
+    if value >= max {
+        return 255;
+    }
+
+    let scaled = ((value - min) as f32 / (max - min) as f32) * 255.0;
+
+    (scaled + 0.5) as u8
+}
+
 
 fn coord_to_u8(value: f32, scale: f32) -> u8 {
     let i = (value * scale) - floorf(value * scale);
