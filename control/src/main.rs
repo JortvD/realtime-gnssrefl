@@ -94,7 +94,7 @@ type StorageType = Mutex<CriticalSectionRawMutex, Option<FlashStorage>>;
 static STORAGE: StorageType = Mutex::new(None);
 
 fn create_clock_config() -> ClockConfig {
-    let result = ClockConfig::system_freq(15_000_000);
+    let result = ClockConfig::system_freq(150_000_000);
 
     if result.is_err() {
         error!("Failed to set system clock frequency");
