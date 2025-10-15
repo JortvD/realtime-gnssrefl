@@ -178,7 +178,6 @@ impl SectorStorage {
     }
 
     pub fn save(&self, storage: &mut FlashStorage, sectors: &SectorList) -> Result<(), Error> {
-        info!("[sect] saving: {:?}", sectors.to_bytes());
         storage.partial_erase(SECTOR_CONTAINER_START, 0, BLOCK_SIZE as u32)?;
         storage.write(SECTOR_CONTAINER_START, 0, &sectors.to_bytes())?;
         Ok(())

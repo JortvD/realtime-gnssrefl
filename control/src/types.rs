@@ -168,7 +168,6 @@ impl SectorList {
 
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         let mut sectors = Vec::<Sector, MAX_SECTORS>::new();
-        info!("[sect] first 64 bytes: {:?}", &data[0..64]);
         if &data[0..4] != b"SECT" {
             return None;
         }
