@@ -215,7 +215,7 @@ impl GNSSSensor {
         let mut offset = 4;
         for item in value.items {
             payload[offset..offset + 4].copy_from_slice(&item.key.to_le_bytes());
-            payload[offset + 4..offset + 4 + item.size as usize].copy_from_slice(&item.value.to_le_bytes());
+            payload[offset + 4..offset + 4 + item.size as usize].copy_from_slice(&item.value.to_le_bytes()[0..item.size as usize]);
             offset += 4 + item.size as usize;
         }
 
