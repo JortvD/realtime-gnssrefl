@@ -73,7 +73,7 @@ pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ  => UARTInterruptHandler<UART0>;
     UART1_IRQ  => UARTInterruptHandler<UART1>;
-    //ADC_IRQ_FIFO => adc::InterruptHandler;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 // Program metadata for `picotool info`.
@@ -114,16 +114,16 @@ async fn main(spawner: Spawner) {
     info!("[main] clock freq: {} MHz", clk_sys_freq() / 1_000_000);
 
     // Watchdog
-    let mut wdg = Watchdog::new(p.WATCHDOG);
-    wdg.pause_on_debug(false);
-    wdg.start(Duration::from_secs(10));
+    // let mut wdg = Watchdog::new(p.WATCHDOG);
+    // wdg.pause_on_debug(false);
+    // wdg.start(Duration::from_secs(10));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
     let pin_bat_stat2 = Input::new(p.PIN_21, Pull::None);
     let pin_bat_CE = Output::new(p.PIN_20, Level::Low);
 
-    let adc: adc::Adc<'_, adc::Blocking> = adc::Adc::new_blocking(p.ADC,  adc::Config::default());
+    let adc: adc::Adc<'_, adc::Async> = adc::Adc::new(p.ADC, Irqs, adc::Config::default());
     let pin_bat_voltage: adc::Channel<'_> = adc::Channel::new_pin(p.PIN_26, Pull::None);
 
     //Temp sensor
@@ -144,19 +144,30 @@ async fn main(spawner: Spawner) {
     let mut gnss_uart_config = uart::Config::default();
     gnss_uart_config.baudrate = GNSS_UART_BAUDRATE;
     let gnss_uart = uart::Uart::new(p.UART0, p.PIN_16, p.PIN_17, Irqs, p.DMA_CH0, p.DMA_CH1, gnss_uart_config);
-    let mut gnss_sensor = GNSSSensor::new(gnss_uart);
+    let pin_gnss_power = Output::new(p.PIN_18, Level::Low);
+    let mut gnss_sensor = GNSSSensor::new(gnss_uart, pin_gnss_power);
 
     // Rockblock pheripherals
     let mut config_uart_rockblock = uart::Config::default();
     config_uart_rockblock.baudrate = ROCKBLOCK_UART_BAUDRATE;
     let uart_rockblock = uart::Uart::new(p.UART1, p.PIN_4, p.PIN_5, Irqs, p.DMA_CH2, p.DMA_CH3, config_uart_rockblock);
+    let pin_rockblock_power = Output::new(p.PIN_8, Level::Low);
     let pin_iridium_enable = Output::new(p.PIN_7, Level::Low);
     let pin_iridium_status = gpio::Input::new(p.PIN_6, gpio::Pull::None);
-    let rockblock = RockBlock9704::new(
+    let mut rockblock = RockBlock9704::new(
         uart_rockblock,
+        pin_rockblock_power,
         pin_iridium_enable,
         pin_iridium_status
     );
+
+    info!("[main] Turning off GNSS");
+    gnss_sensor.sleep().await;
+    info!("[main] GNSS powered off");
+
+    info!("[main] Turning off RockBlock");
+    rockblock.power_off().await;
+    info!("[main] RockBlock powered off");
 
     // Dump pheripheral
     let dump_pin = Input::new(p.PIN_15, gpio::Pull::Up);
@@ -170,13 +181,13 @@ async fn main(spawner: Spawner) {
     info!("[main] initialized peripherals");
 
     info!("[main] starting watchdog feeder task");
-    static CELL: StaticCell<Watchdog> = StaticCell::new();
-    let wdg: &'static mut Watchdog = CELL.init(wdg);
+    // static CELL: StaticCell<Watchdog> = StaticCell::new();
+    // let wdg: &'static mut Watchdog = CELL.init(wdg);
 
-    let result = spawner.spawn(watchdog_feeder(wdg));
-    if result.is_err() {
-        error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
-    }
+    // let result = spawner.spawn(watchdog_feeder(wdg));
+    // if result.is_err() {
+    //     error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
+    // }
 
     if dump_pin.is_low() {
         info!("[main] dump pin is low, dumping storage and halting");
@@ -270,7 +281,7 @@ async fn led_blink(mut led: Output<'static>) {
 async fn watchdog_feeder(wdg: &'static mut Watchdog) {
     info!("[wdg_]: starting");
     loop {
-        Timer::after(Duration::from_secs(5)).await;
+        Timer::after(Duration::from_secs(1)).await;
         wdg.feed();
     }
 }

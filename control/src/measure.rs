@@ -1,5 +1,5 @@
 use defmt::{info, Format};
-use embassy_time::Instant;
+use embassy_time::{with_timeout, Duration, Instant};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::Vec;
 
@@ -17,6 +17,7 @@ pub enum SectorFailError {
     BinOverflow,
     StorageAccess,
     StorageWrite,
+    Timeout,
 }
 
 #[embassy_executor::task]
@@ -34,12 +35,13 @@ pub async fn task_measure(
             MeasureReqMsg::GetRefTime => {
                 info!("[meas] fetching reference time from GNSS");
                 gnss_sensor.wake().await;
-                if let Some((deviation, date)) = get_time(&mut gnss_sensor).await {
+                let result = get_time(&mut gnss_sensor).await;
+                gnss_sensor.sleep().await;
+                if let Some((deviation, date)) = result {
                     channel_res.send(MeasureResMsg::RefTimeSuccess { deviation, date }).await;
                 } else {
                     channel_res.send(MeasureResMsg::RefTimeFail).await;
                 }
-                gnss_sensor.sleep().await;
             }
             MeasureReqMsg::MeasureSector { sector, config, sleep_gnss } => {
                 info!("[meas] starting measurement for sector {}", sector.get_measurement_index());
@@ -82,7 +84,7 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
     let mut parser = NMEAParser::new_from_config(config);
 
     loop {
-        let nmeaburst= gnss_sensor.read_burst().await;
+        let nmeaburst= with_timeout(Duration::from_secs(30), gnss_sensor.read_burst()).await.map_err(|_| SectorFailError::Timeout)?;
         let burst = parser.parse_burst(&nmeaburst, false);
         let time_str = seconds_to_time_str(burst.time);
 
@@ -162,7 +164,7 @@ pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> 
 
     for i in 0..MAX_ATTEMPTS {
         let mut parser = NMEAParser::new();
-        let nmeaburst = gnss_sensor.read_burst().await;
+        let nmeaburst = with_timeout(Duration::from_secs(30), gnss_sensor.read_burst()).await.ok()?;
         let burst = parser.parse_burst(&nmeaburst, true);
         if let Some(date) = burst.date {
             if date > 40000 {

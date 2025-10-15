@@ -11,7 +11,7 @@ pub async fn task_monitor(
     channel_res: &'static Channel<CriticalSectionRawMutex, MonResMsg, 8>,
     mut battery: Battery,
 ) {
-    let mut battery_mv: u32 = 0;
+    let mut battery_mv: f32 = 0.0;
     let mut chip_temp_c: f32 = 0.0;
     let mut next_adc_measurement = Instant::now();
 
@@ -20,34 +20,33 @@ pub async fn task_monitor(
     loop {
         let mut adc_timer = Timer::at(next_adc_measurement);
 
-        info!("[moni] waiting for request...");
         let result = select(
             &mut adc_timer,
             channel_req.receive()
         ).await;
         match result {
             Either::First(_) => {
-                // info!("timer went off!");
+                let start = Instant::now();
                 match battery.get_battery_voltage().await {
                     Ok(volts) => {
-                        battery_mv = volts;
-                        info!("[moni] Battery millivolts: {}", battery_mv);
+                        battery_mv = calc_emwa(volts as f32, battery_mv, 0.05);
+                        info!("[moni] Battery millivolts {} (emwa {}) in {} ms", volts, battery_mv, (Instant::now() - start).as_millis());
                     }
                     Err(e) => {
-                        info!("[moni] Reading ADC error: {}", e)
+                        // info!("[moni] Reading ADC error: {}", e)
                     }
                 }
 
-                // match battery.get_chip_temperature().await {
-                //     Ok(temp) => {
-                //         chip_temp_c = temp;
-                //         info!("[moni] Chip temperature: {}", chip_temp_c);
-                //     }
-                //     Err(e) => {
-                //         info!("[moni] Chip temperature fail: {}", e)
-                //     }
-                // }
-                // info!("Move timer");
+                let start = Instant::now();
+                match battery.get_chip_temperature().await {
+                    Ok(temp) => {
+                        chip_temp_c = calc_emwa(temp, chip_temp_c, 0.05);
+                        info!("[moni] Chip temperature: {} (emwa {}) in {} ms", temp, chip_temp_c, (Instant::now() - start).as_millis());
+                    }
+                    Err(e) => {
+                        // info!("[moni] Chip temperature fail: {}", e)
+                    }
+                }
                 next_adc_measurement = next_adc_measurement.saturating_add(Duration::from_secs(10));
             }
             Either::Second(message) => {
@@ -61,5 +60,13 @@ pub async fn task_monitor(
                 }
             }
         }
+    }
+}
+
+fn calc_emwa(now: f32, previous: f32, k: f32) -> f32 {
+    if previous == 0.0 {
+        now
+    } else {
+        now * k + previous * (1.0-k)
     }
 }

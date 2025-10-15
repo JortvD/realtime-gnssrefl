@@ -19,7 +19,7 @@ pub struct Battery {
     pin_CE: gpio::Output<'static>,
     pin_voltage: adc::Channel<'static>,
     pin_temp: adc::Channel<'static>,
-    adc: adc::Adc<'static, adc::Blocking>,
+    adc: adc::Adc<'static, adc::Async>,
 }
 
 impl Battery {
@@ -28,7 +28,7 @@ impl Battery {
             pin_CE: gpio::Output<'static>, 
             pin_voltage: adc::Channel<'static>, 
             pin_temp: adc::Channel<'static>,
-            adc: adc::Adc<'static, adc::Blocking>,
+            adc: adc::Adc<'static, adc::Async>,
             ) -> Self {
         Battery { 
             pin_stat1, 
@@ -41,28 +41,29 @@ impl Battery {
     }
 
     pub async fn get_battery_voltage(&mut self) -> Result<u32, adc::Error> {
-        const NUM_SAMPLES: usize = 10;
-        const SAMPLE_DELAY_MS: u64 = 500;
+        const NUM_SAMPLES: usize = 1;
+        const SAMPLE_DELAY_MS: u64 = 10;
 
         let mut sum: u32 = 0;
-        let mut actual_num: u32 = 0;
+        let mut actual_num: usize = 0;
 
         for _ in 0..NUM_SAMPLES {
-            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_voltage)).await {
-            //     Ok(res) => {
-            //         sum += res? as u32;
-            //         actual_num += 1;
-            //     },
-            //     Err(e) => {
-            //         info!("ADC timed out");
-            //     }
-            // };
-            sum+=self.adc.blocking_read(&mut self.pin_voltage)? as u32; 
+            match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_voltage)).await {
+                Ok(res) => {
+                    sum += res? as u32;
+                    actual_num += 1;
+                },
+                Err(e) => {}
+            };
             embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
+        }
+        
+        if actual_num == 0 {
+            return Err(adc::Error::ConversionFailed);
         }
 
         // Compute average ADC reading
-        let avg_raw = sum as f32 / NUM_SAMPLES as f32;
+        let avg_raw = sum as f32 / actual_num as f32;
 
         // Convert to mV (assuming 3.3 V reference, 12-bit ADC)
         let voltage_mv = avg_raw * 3300.0 / 4096.0;
@@ -72,28 +73,29 @@ impl Battery {
     }
 
     pub async fn get_chip_temperature(&mut self) -> Result<f32, adc::Error> {
-        const NUM_SAMPLES: usize = 10;
-        const SAMPLE_DELAY_MS: u64 = 500;
+        const NUM_SAMPLES: usize = 1;
+        const SAMPLE_DELAY_MS: u64 = 10;
 
         let mut sum: u32 = 0;
-        let mut actual_num: u32 = 0;
+        let mut actual_num: usize = 0;
 
         for _ in 0..NUM_SAMPLES {
-            // match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_temp)).await {
-            //     Ok(res) => {
-            //         sum += res? as u32;
-            //         actual_num += 1;
-            //     },
-            //     Err(e) => {
-            //         info!("ADC timed out");
-            //     }
-            // };
-            sum+=self.adc.blocking_read(&mut self.pin_temp)? as u32; 
+            match with_timeout(Duration::from_millis(100), self.adc.read(&mut self.pin_temp)).await {
+                Ok(res) => {
+                    sum += res? as u32;
+                    actual_num += 1;
+                },
+                Err(e) => {}
+            };
             embassy_time::Timer::after_millis(SAMPLE_DELAY_MS).await;
         }
 
+        if actual_num == 0 {
+            return Err(adc::Error::ConversionFailed);
+        }
+
         // Compute average ADC reading
-        let avg_raw = sum as f32 / NUM_SAMPLES as f32;
+        let avg_raw = sum as f32 / actual_num as f32;
 
         // Convert to mV (assuming 3.3 V reference, 12-bit ADC)
         let temp_c = convert_to_celsius(avg_raw);

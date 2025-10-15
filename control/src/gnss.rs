@@ -1,11 +1,12 @@
 use defmt::info;
-use embassy_rp::uart;
+use embassy_rp::{gpio, uart};
 use embassy_time::{Instant, Timer};
 
 use crate::{nmea::NmeaBurst, types::Nmealine};
 
 pub struct GNSSSensor {
     uart: uart::Uart<'static, uart::Async>,
+    pin_power: gpio::Output<'static>,
     awake: bool,
 }
 
@@ -41,8 +42,8 @@ fn checksum(command: &UBXCommand) -> u16 {
 }
 
 impl GNSSSensor {
-    pub fn new(uart: uart::Uart<'static, uart::Async>) -> Self {
-        Self { uart, awake: false }
+    pub fn new(uart: uart::Uart<'static, uart::Async>, pin_power: gpio::Output<'static>) -> Self {
+        Self { uart, pin_power, awake: false }
     }
 
     pub async fn read_burst(&mut self) -> NmeaBurst {
@@ -112,11 +113,9 @@ impl GNSSSensor {
             return;
         }
 
-        let command = self.rxm_pmreq(0, false, true, true, false, false, false).await;
+        self.pin_power.set_low();
 
-        self.send_ubx(command).await;
-
-        Timer::after_secs(10).await;
+        Timer::after_secs(5).await;
 
         info!("[meas] GNSS put to sleep");
         self.awake = false;
@@ -128,14 +127,9 @@ impl GNSSSensor {
             return;
         }
 
-        match self.uart.write(b"\r\n").await {
-            Ok(_) => {}
-            Err(e) => {
-                info!("[meas] Error waking GNSS: {}", e);
-            }
-        }
+        self.pin_power.set_high();
 
-        Timer::after_secs(10).await;
+        Timer::after_secs(5).await;
 
         info!("[meas] GNSS woke up");
         self.awake = true;

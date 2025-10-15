@@ -91,18 +91,17 @@ impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, 24>::new();
         // mid_times.push(utils::time_str_to_seconds("14:48:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:54:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:06:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:12:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:18:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:24:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:36:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:42:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:48:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:54:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:06:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:12:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:18:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:24:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:36:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:42:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:48:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:54:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
 
         // mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("03:00:00").unwrap()).unwrap();

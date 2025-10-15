@@ -151,6 +151,9 @@ async fn run_comms(
     rockblock.check_status().await;
     if rockblock.status != crate::rockblock::RockBlock9704Status::Ready {
         info!("[comm] RockBlock not ready, aborting comms");
+        info!("[comm] Turning off RockBlock");
+        rockblock.power_off().await;
+        info!("[comm] RockBlock powered off");
         return Err(CommsError::RockBlockNotReady);
     }
     info!("[comm] RockBlock ready, preparing packet");
@@ -210,9 +213,22 @@ async fn run_comms(
         len as u8,
     );
 
+    info!("[comm] Checking constellation");
+    for _ in 0..5 {
+        if let Some(result) = rockblock.get_constellation_state().await {
+            info!("[comm] Constellation state: {} {} {}", result.signal_bars, result.signal_level, result.constellation_visible);
+        } else {
+            info!("[comm] Failed to get constellation state");
+        }
+        Timer::after_secs(3).await;
+    }
+
     let result = rockblock.send_message(message).await;
-    if result.is_none() {
-        info!("[comm] RockBlock send failed after {} ms", (Instant::now() - start).as_millis());
+    if result.is_err() {
+        info!("[comm] RockBlock send failed {} after {} ms", result.unwrap_err(), (Instant::now() - start).as_millis());
+        info!("[comm] Turning off RockBlock");
+        rockblock.power_off().await;
+        info!("[comm] RockBlock powered off");
         return Err(CommsError::RockBlockSendFail);
     }
     info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
