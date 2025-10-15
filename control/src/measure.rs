@@ -166,6 +166,7 @@ pub async fn get_time(gnss_sensor: &mut GNSSSensor) -> Option<(Deviation, u32)> 
         let mut parser = NMEAParser::new();
         let nmeaburst = with_timeout(Duration::from_secs(30), gnss_sensor.read_burst()).await.ok()?;
         let burst = parser.parse_burst(&nmeaburst, true);
+        info!("[meas][{}] received {} bytes in {} ms", i, nmeaburst.bytes, nmeaburst.duration.as_millis());
         if let Some(date) = burst.date {
             if date > 40000 {
                 let date = date_from_days(date as i64);
