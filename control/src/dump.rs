@@ -1,7 +1,7 @@
 use defmt::info;
 use embassy_time::Timer;
 
-use crate::{compute::{Record, BUF_BYTES}, storage::{BinStorage, MeasurementStorage, SectorStorage}, types::{NUM_BINS, NUM_MEASUREMENTS}, StorageType};
+use crate::{compute::{Record, BUF_BYTES}, storage::{BinStorage, MeasurementStorage, SectorStorage}, types::{CONTAINER_SIZE, NUM_BINS, NUM_MEASUREMENTS}, StorageType};
 
 pub async fn dump(storage: &'static StorageType) {
     let mut storage_lock = storage.lock().await;
@@ -66,41 +66,44 @@ pub async fn dump(storage: &'static StorageType) {
     let bin_storage = BinStorage::new();
 
     for i in 0..NUM_BINS {
-        let mut buffer = [0u8; BUF_BYTES];
-        if let Ok(_) = bin_storage.read(storage, i as u32, & mut buffer) {
+        let mut buffer = [0u8; CONTAINER_SIZE];
+        let result = bin_storage.read(storage, i as u32, &mut buffer);
+        if let Ok(_) = result {
             let mut words = buffer.chunks_exact(4);
 
             while let Some(hdr_b) = words.next() {
-                    let header = u32::from_le_bytes([hdr_b[0], hdr_b[1], hdr_b[2], hdr_b[3]]);
-                    let time = (header >> 8) as u16;
-                    let num = (header & 0xFF) as u8;
+                let header = u32::from_le_bytes([hdr_b[0], hdr_b[1], hdr_b[2], hdr_b[3]]);
+                let time = (header >> 8) as u16;
+                let num = (header & 0xFF) as u8;
 
-                    if time == u16::MAX || num == 0 {
-                        continue;
-                    }
-
-                    for _ in 0..num {
-                        if let Some(smp_b) = words.next() {
-                            let sample = Record::from_sample(u32::from_le_bytes([smp_b[0], smp_b[1], smp_b[2], smp_b[3]]));
-
-                            info!("DATA:{},{},{},{},{},{},{},{},{}",
-                                i,
-                                time,
-                                sample.get_id(),
-                                sample.get_satellite(),
-                                sample.get_network(),
-                                sample.get_band(),
-                                sample.get_elevation(),
-                                sample.get_azimuth(),
-                                sample.get_snr()
-                            );
-                        } else {
-                            break;
-                        }
-                    }
-
-                    Timer::after_millis(1).await;
+                if time == u16::MAX || num == 0 {
+                    continue;
                 }
+
+                for _ in 0..num {
+                    if let Some(smp_b) = words.next() {
+                        let sample = Record::from_sample(u32::from_le_bytes([smp_b[0], smp_b[1], smp_b[2], smp_b[3]]));
+
+                        info!("DATA:{},{},{},{},{},{},{},{},{}",
+                            i,
+                            time,
+                            sample.get_id(),
+                            sample.get_satellite(),
+                            sample.get_network(),
+                            sample.get_band(),
+                            sample.get_elevation(),
+                            sample.get_azimuth(),
+                            sample.get_snr()
+                        );
+                    } else {
+                        break;
+                    }
+                }
+
+                Timer::after_millis(1).await;
+            }
+        } else {
+            info!("DATA: no data for bin {}: {}", i, result.err().unwrap());
         }
     }
 }

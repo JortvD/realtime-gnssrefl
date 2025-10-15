@@ -42,9 +42,7 @@ impl Scheduler {
         let measurement_index = uid % NUM_MEASUREMENTS as u32;
 
         // Compute bin range
-        let start_bin_index = (sector_day * sectors_per_day as u32
-            + midpoint_index as u32 * config.bins_per_sector)
-            % NUM_BINS as u32;
+        let start_bin_index = (uid * config.bins_per_sector) % NUM_BINS as u32;
         let n_bins = config.bins_per_sector;
 
         // Create Sector

@@ -90,7 +90,7 @@ pub async fn task_control(
             let measuring_idxs: Vec<usize, MAX_SECTORS> = sectors.get_idxs_for_state(SectorState::MEASURING);
 
             let sector = sectors.get(index);
-            info!("[cont] requesting measurement for sector {}", sector.get_measurement_index());
+            info!("[cont] requesting measurement for sector {}", sector.get_uid());
 
             let preceding_sector = measuring_idxs.iter().find(|&i| {
                 sectors.get(*i).is_succeeding(&sector)
@@ -107,7 +107,7 @@ pub async fn task_control(
         if list_to_compute.len() > 0 {
             for &index in list_to_compute.iter() {
                 let sector = sectors.get_mut(index);
-                info!("[cont] requesting computation for sector {}", sector.get_measurement_index());
+                info!("[cont] requesting computation for sector {}", sector.get_uid());
                 sector.state = SectorState::COMPUTING;
                 compute_request_channel.send(ComputeReqMsg::Compute { sector: sector.clone(), config: config.clone() }).await;
             }
@@ -119,7 +119,7 @@ pub async fn task_control(
             let mut sectors_to_send = Vec::<Sector, MAX_SECTORS>::new();
             for &index in list_to_communicate.iter() {
                 let sector = sectors.get_mut(index);
-                info!("[cont] scheduling communication for sector {}", sector.get_measurement_index());
+                info!("[cont] scheduling communication for sector {}", sector.get_uid());
                 sector.state = SectorState::COMMUNICATING;
                 sectors_to_send.push(sector.clone()).expect("Should fit");
             }
