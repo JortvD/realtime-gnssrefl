@@ -77,6 +77,7 @@ pub async fn dump(storage: &'static StorageType) {
                 let num = (header & 0xFF) as u8;
 
                 if time == u16::MAX || num == 0 {
+                    info!("DATA:{},{},0,0,0,0,0,0,0", i, time);
                     continue;
                 }
 
@@ -103,7 +104,7 @@ pub async fn dump(storage: &'static StorageType) {
                 Timer::after_millis(1).await;
             }
         } else {
-            info!("DATA: no data for bin {}: {}", i, result.err().unwrap());
+            info!("[main] no data for bin {}: {}", i, result.err().unwrap());
         }
     }
 }
