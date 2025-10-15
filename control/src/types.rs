@@ -4,7 +4,7 @@ use heapless::{Vec, String};
 use crate::{realtime::RealTime, utils};
 
 // Control
-pub const MAX_SECTORS: usize = 128;
+pub const MAX_SECTORS: usize = 96;
 
 // NMEA processing
 pub const NMEA_MAX_LINES: usize = 64;
@@ -20,7 +20,7 @@ pub const NUM_CONTAINERS: usize = 51;
 pub const NUM_CONTAINER_BLOCKS: usize = 15;
 pub const CONTAINER_SIZE: usize = NUM_CONTAINER_BLOCKS * BLOCK_SIZE; // 60KB
 pub const USABLE_SIZE: usize = NUM_CONTAINERS * CONTAINER_SIZE; // ~3MB
-pub const START_ADDRESS: u32 = 0x100000; // Start at 1MB offset (flash-relative)
+pub const START_ADDRESS: u32 = 0x100000 - CONTAINER_SIZE as u32; // Start at 1MB offset (flash-relative)
 
 // Storage is divided as
 // 0-49: bins (50 containers)
@@ -29,7 +29,8 @@ pub const BINS_CONTAINER_START: usize = 0;
 // 50: measurements (1 container)
 pub const NUM_MEASUREMENTS: usize = NUM_CONTAINER_BLOCKS;
 pub const MEASUREMENTS_CONTAINER_START: usize = 50;
-pub const SECTOR_CONTAINER_START: usize = 51;
+// 51: other measurements (1 container)
+pub const SECTOR_CONTAINER_START: usize = 51; // 1 block
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
 pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin (4 minutes)

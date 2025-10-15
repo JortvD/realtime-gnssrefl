@@ -50,7 +50,7 @@ pub async fn task_control(
             info!("[cont] loaded {} sectors from storage", sectors.len());
         } else {
             sectors = SectorList::new();
-            info!("[cont] no stored sectors found, starting fresh");
+            info!("[cont] no stored sectors found ({}), starting fresh", result.err().unwrap());
         }
     }
 

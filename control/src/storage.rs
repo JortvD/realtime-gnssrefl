@@ -2,7 +2,7 @@ use embassy_rp::{flash::{Blocking, Error, Flash}, peripherals::FLASH, Peri};
 use embassy_time::Instant;
 use defmt::*;
 
-use crate::types::{Measurement, SectorList, BINS_CONTAINER_START, BLOCK_SIZE, CONTAINER_SIZE, FLASH_SIZE, MEASUREMENTS_CONTAINER_START, MEASUREMENT_SIZE, MEASUREMENT_STORAGE_SIZE, NUM_CONTAINERS, SECTOR_LIST_SIZE, START_ADDRESS, USABLE_SIZE};
+use crate::types::{Measurement, SectorList, BINS_CONTAINER_START, BLOCK_SIZE, CONTAINER_SIZE, FLASH_SIZE, MEASUREMENTS_CONTAINER_START, MEASUREMENT_SIZE, MEASUREMENT_STORAGE_SIZE, NUM_CONTAINERS, SECTOR_CONTAINER_START, SECTOR_LIST_SIZE, START_ADDRESS, USABLE_SIZE};
 
 pub struct FlashStorage {
     timing: bool,
@@ -170,15 +170,15 @@ impl SectorStorage {
         Self {}
     }
 
-    pub fn load(&self, storage: &mut FlashStorage) -> Result<SectorList, ()> {
+    pub fn load(&self, storage: &mut FlashStorage) -> Result<SectorList, Error> {
         let mut buffer = [0u8; SECTOR_LIST_SIZE];
-        storage.read(0, 0, &mut buffer).map_err(|_| ())?;
+        storage.read(SECTOR_CONTAINER_START, 0, &mut buffer)?;
 
-        Ok(SectorList::from_bytes(&buffer).ok_or(())?)
+        Ok(SectorList::from_bytes(&buffer).ok_or(Error::Other)?)
     }
 
-    pub fn save(&self, storage: &mut FlashStorage, sectors: &SectorList) -> Result<(), ()> {
-        storage.write(0, 0, &sectors.to_bytes()).map_err(|_| ())?;
+    pub fn save(&self, storage: &mut FlashStorage, sectors: &SectorList) -> Result<(), Error> {
+        storage.write(SECTOR_CONTAINER_START, 0, &sectors.to_bytes())?;
         Ok(())
     }
 }
