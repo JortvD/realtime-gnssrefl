@@ -95,36 +95,12 @@ impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
         // mid_times.push(utils::time_str_to_seconds("14:48:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:10:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:10:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:50:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:10:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:50:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:10:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:30:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:50:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:10:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("15:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:30:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:50:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
 
         // mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
@@ -159,7 +135,7 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 2,
+            bins_per_sector: 4,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
@@ -455,7 +431,11 @@ impl Sector {
     }
 
     pub fn get_bin_for_time(&self, time: u32) -> u32 {
-        let dt = time - self.start_time;
+        let dt = if time >= self.start_time {
+            time - self.start_time
+        } else {
+            86400 + time - self.start_time
+        };
         let bin_id = self.start_bin_index + dt / self.seconds_per_bin;
 
         bin_id % NUM_BINS as u32

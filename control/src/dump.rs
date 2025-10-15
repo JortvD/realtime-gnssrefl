@@ -77,7 +77,6 @@ pub async fn dump(storage: &'static StorageType) {
                 let num = (header & 0xFF) as u8;
 
                 if time == u16::MAX || num == 0 {
-                    info!("DATA:{},{},0,0,0,0,0,0,0", i, time);
                     continue;
                 }
 
