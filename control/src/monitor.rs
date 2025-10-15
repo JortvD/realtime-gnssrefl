@@ -29,7 +29,7 @@ pub async fn task_monitor(
                 let start = Instant::now();
                 match battery.get_battery_voltage().await {
                     Ok(volts) => {
-                        battery_mv = calc_emwa(volts as f32, battery_mv, 0.05);
+                        battery_mv = calc_emwa(volts as f32, battery_mv, 0.05, 0.0, 4200.0);
                         info!("[moni] Battery millivolts {} (emwa {}) in {} ms", volts, battery_mv as u32, (Instant::now() - start).as_millis());
                         channel_res.send(MonResMsg::BatVoltSuccess { voltage: battery_mv as u32 }).await;
                     }
@@ -41,7 +41,7 @@ pub async fn task_monitor(
                 let start = Instant::now();
                 match battery.get_chip_temperature().await {
                     Ok(temp) => {
-                        chip_temp_c = calc_emwa(temp, chip_temp_c, 0.05);
+                        chip_temp_c = calc_emwa(temp, chip_temp_c, 0.05, -50.0, 85.0);
                         info!("[moni] Chip temperature: {} (emwa {}) in {} ms", temp, chip_temp_c, (Instant::now() - start).as_millis());
                         channel_res.send(MonResMsg::TempSuccess { temp_c: chip_temp_c }).await;
                     }
@@ -66,8 +66,12 @@ pub async fn task_monitor(
     }
 }
 
-fn calc_emwa(now: f32, previous: f32, k: f32) -> f32 {
-    if previous == 0.0 {
+fn calc_emwa(now: f32, previous: f32, k: f32, min: f32, max: f32) -> f32 {
+    if now <= min {
+        previous
+    } else if now >= max {
+        previous
+    } else if previous == 0.0 {
         now
     } else {
         now * k + previous * (1.0-k)
