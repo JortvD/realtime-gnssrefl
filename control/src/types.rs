@@ -95,11 +95,15 @@ impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
         mid_times.push(utils::time_str_to_seconds("02:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("06:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("10:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("19:30:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
+        
         Self {
             pre_min_elevation: 5,
             pre_max_elevation: 30,
