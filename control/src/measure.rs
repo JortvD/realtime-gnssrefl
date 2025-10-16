@@ -1,5 +1,3 @@
-use core::f32::consts::E;
-
 use defmt::{info, Format};
 use embassy_time::{with_timeout, Duration, Instant};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
