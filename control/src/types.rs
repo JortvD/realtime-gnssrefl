@@ -118,19 +118,19 @@ impl Default for Config {
         Self {
             pre_min_elevation: 5,
             pre_max_elevation: 40,
-            pre_min_azimuth: 90,
-            pre_max_azimuth: 270,
+            pre_min_azimuth: 140,
+            pre_max_azimuth: 300,
 
             post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 90,
-            post_max_azimuth: 270,
+            post_min_azimuth: 160,
+            post_max_azimuth: 280,
 
             min_relative_height: 0.5,
             max_relative_height: 10.0,
             relative_height_step_size: 0.2,
 
-            qc_min_elevation_range: 0,
+            qc_min_elevation_range: 8,
             qc_iqr_size: 1.5,
 
             sector_mid_times: mid_times,
