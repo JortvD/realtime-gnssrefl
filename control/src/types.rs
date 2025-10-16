@@ -94,7 +94,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:17:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("20:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
@@ -128,7 +128,7 @@ impl Default for Config {
 
             min_relative_height: 0.5,
             max_relative_height: 10.0,
-            relative_height_step_size: 0.2,
+            relative_height_step_size: 0.02,
 
             qc_min_elevation_range: 8,
             qc_iqr_size: 1.5,
