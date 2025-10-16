@@ -48,7 +48,6 @@ app = Flask(__name__, static_folder=STATIC_FOLDER)
 def webhook():
     data = request.get_json()
     print(data)
-    data = data.get('mo', {})
     message_b64 = data.get('message', [])
     packet_bytes = base64.b64decode(str(message_b64))
     HEADER_FORMAT = "<BBBB"           # battery, temp, lat, lon (4 bytes)
