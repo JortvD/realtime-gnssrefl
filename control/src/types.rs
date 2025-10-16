@@ -94,7 +94,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("13:17:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("20:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
@@ -135,7 +135,7 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 25,
+            bins_per_sector: 10,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
