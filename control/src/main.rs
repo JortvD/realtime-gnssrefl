@@ -117,7 +117,7 @@ async fn main(spawner: Spawner) {
     // Watchdog
     let mut wdg = Watchdog::new(p.WATCHDOG);
     wdg.pause_on_debug(false);
-    wdg.start(Duration::from_secs(30));
+    wdg.start(Duration::from_secs(10));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
