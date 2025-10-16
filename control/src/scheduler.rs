@@ -11,21 +11,21 @@ impl Scheduler {
         Self {}
     }
 
-    pub fn get_next_sector(&self, config: &Config, realtime: &RealTime, sector: &Sector) -> (Sector, u32) {
+    pub fn get_next_sector(&self, config: &Config, realtime: &RealTime, sector: &Sector) -> (Sector, u32, u32) {
         let now_time = realtime.get_real_time();
         let now_days = realtime.get_days();
         let midpoint_index = self.get_next_sector_midpoint_index(&config, &sector);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    pub fn get_first_sector(&self, config: &Config, realtime: &RealTime) -> (Sector, u32) {
+    pub fn get_first_sector(&self, config: &Config, realtime: &RealTime) -> (Sector, u32, u32) {
         let now_time = realtime.get_real_time();
         let now_days = realtime.get_days();
         let midpoint_index = self.get_first_sector_midpoint_index(config, now_time);
         self.get_sectortimer_from_midpoint_index(&config, midpoint_index, now_time, now_days)
     }
 
-    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> (Sector, u32) {
+    fn get_sectortimer_from_midpoint_index(&self, config: &Config, midpoint_index: u32, now_time: u32, now_days: u32) -> (Sector, u32, u32) {
         let sectors_per_day = config.sector_mid_times.len() as u32;
         let half_measure_duration = config.get_measure_duration() / 2;
 
@@ -78,7 +78,7 @@ impl Scheduler {
             utils::seconds_to_time_str(start_time_with_warmup).as_str()
         );
 
-        (sector, start_time_with_warmup)
+        (sector, start_time_with_warmup, if !is_next_day { 0 } else { 1 })
     }
 
     fn get_next_sector_midpoint_index(&self, config: &Config, sector: &Sector) -> u32{

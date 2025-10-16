@@ -1,3 +1,5 @@
+use core::f32::consts::E;
+
 use defmt::{info, Format};
 use embassy_time::{with_timeout, Duration, Instant};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
@@ -14,6 +16,7 @@ use crate::gnss::GNSSSensor;
 
 #[derive(Debug, Format)]
 pub enum SectorFailError {
+    NoData,
     BinOverflow,
     StorageAccess,
     StorageWrite,
@@ -104,6 +107,11 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
         }
 
         if sector.is_time_after_sector(burst.time) {
+            if last_bin_id == sector.get_start_bin_index() && bin_data.len() == 0 {
+                info!("[meas][{}] time is later than current sector but no data collected, FAILING", time_str.as_str());
+                return Err(SectorFailError::NoData);
+            }
+
             deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
             date = burst.date.unwrap_or(0);
             info!("[meas][{}] time is later than current sector, STOPPING", time_str.as_str());

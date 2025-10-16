@@ -86,9 +86,9 @@ pub fn next_or_first(vec: &[u32], x: u32) -> (u32, usize) {
         diff.min(wrapped_diff)
     }
     
-    pub fn get_timer(&self, sleep_until: u32) -> Timer {
+    pub fn get_timer(&self, sleep_until: u32, sleep_days: u32) -> Timer {
         let now = self.get_real_time();
-        Timer::after_millis(RealTime::subtract_wrapping(sleep_until, now) as u64 * 1000 / SPEEDUP_FACTOR)
+        Timer::after_millis((RealTime::subtract_wrapping(sleep_until, now) as u64 + sleep_days as u64 * 86400) * 1000 / SPEEDUP_FACTOR)
     }
 }
 
