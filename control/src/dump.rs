@@ -32,6 +32,9 @@ pub async fn dump(storage: &'static StorageType) {
     let measurement_storage = MeasurementStorage::new();
     for i in 0..NUM_MEASUREMENTS {
         if let Some(measurement) = measurement_storage.read(storage, i as u32) {
+            if measurement.uid == 0 {
+                continue;
+            }
             info!("MEASUREMENT:{}, {}, {}, {}, {}, {}, {}, {}, {}",
                 i,
                 measurement.uid,
@@ -44,6 +47,9 @@ pub async fn dump(storage: &'static StorageType) {
                 measurement.lon
             );
             for (j, observation) in measurement.observations.iter().enumerate() {
+                if observation.sat_id == u16::MAX {
+                    continue;
+                }
                 info!("OBSERVATION:{}, {}, {}, {}, {}, {}, {}, {}, {}, {}",
                     i,
                     j,

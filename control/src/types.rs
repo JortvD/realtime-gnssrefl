@@ -94,37 +94,22 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("20:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("15:20:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
-
-        // mid_times.push(utils::time_str_to_seconds("01:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("03:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("05:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("09:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("11:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("13:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("15:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("19:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("21:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("23:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("02:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("06:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("10:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
         Self {
             pre_min_elevation: 5,
-            pre_max_elevation: 40,
-            pre_min_azimuth: 140,
-            pre_max_azimuth: 300,
+            pre_max_elevation: 30,
+            pre_min_azimuth: 200,
+            pre_max_azimuth: 290,
 
             post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 160,
-            post_max_azimuth: 280,
+            post_min_azimuth: 200,
+            post_max_azimuth: 290,
 
             min_relative_height: 0.5,
             max_relative_height: 10.0,
@@ -135,7 +120,7 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 10,
+            bins_per_sector: 30,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
