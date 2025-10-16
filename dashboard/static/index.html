@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TAHMO Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    #map { height: 100%; }
+  </style>
+</head>
+<body class="bg-slate-50">
+  <div class="max-w-7xl mx-auto p-6 space-y-6">
+    <!-- Header + Filters -->
+    <header class="flex flex-row gap-6 w-full items-center">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold text-slate-800">TAHMO Dashboard</h1>
+          <p class="text-slate-500">Visualization of all received data</p>
+        </div>
+      </div>
+      <div class="flex-1"></div>
+
+      <!-- Filters bar -->
+      <form id="filters" class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 p-4">
+        <div class="flex flex-row gap-4">
+          <div>
+            <label class="text-xs text-slate-500" for="fromDate">From</label>
+            <input id="fromDate" type="date" class="input w-full" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500" for="toDate">To</label>
+            <input id="toDate" type="date" class="input w-full" />
+          </div>
+          <div class="">
+            <label class="text-xs text-slate-500" for="iccid">SIM ICCID</label>
+            <input id="iccid" type="text" class=" px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full" placeholder="e.g. 8988…" list="iccidList" />
+            <datalist id="iccidList"></datalist>
+          </div>
+          <div class="flex gap-2">
+            <button id="applyBtn" class="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:border-indigo-700" type="submit">Apply</button>
+            <button id="clearBtn" class="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white hover:bg-slate-50" type="button">Clear</button>
+          </div>
+        </div>
+      </form>
+    </header>
+
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 space-y-6">
+        <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 overflow-hidden">
+          <div class="p-4 border-b border-slate-100"><h2 class="text-lg font-semibold text-slate-800">Relative height per measurement</h2></div>
+          <div class="p-4"><canvas id="rhChart" height="120"></canvas></div>
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 overflow-hidden flex flex-col h-full">
+        <div class="px-4 pt-4 flex justify-between">
+          <h2 class="text-lg font-semibold text-slate-800">Latest Pulse</h2>
+          <span id="latestWhen" class="text-sm text-slate-500"></span>
+        </div>
+        <div class="border-b border-slate-100 p-3">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-1">
+            <div>
+              <div class="text-xs text-slate-500">Location</div>
+              <div id="latestLoc" class="text-sm font-medium">-</div>
+            </div>
+            <div>
+              <div class="text-xs text-slate-500">Temp (°C)</div>
+              <div id="latestTemp" class="text-sm font-medium">-</div>
+            </div>
+            <div>
+              <div class="text-xs text-slate-500">Battery (V)</div>
+              <div id="latestBatt" class="text-sm font-medium">-</div>
+            </div>
+            <div>
+              <div class="text-xs text-slate-500">Measurements</div>
+              <div id="latestCount" class="text-sm font-medium">-</div>
+            </div>
+          </div>
+        </div>
+        <div id="map" style="flex:1; min-height:220px"></div>
+      </div>
+    </section>
+
+    <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex justify-between"><h2 class="text-lg font-semibold">All Pulses</h2><span id="tablePulse" class="text-sm text-slate-500"></span></div>
+      <div class="max-h-[420px] overflow-auto">
+        <table class="min-w-full divide-y divide-slate-100">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-2 text-xs font-semibold text-left">ICCID</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Time</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Battery (V)</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Temp (°C)</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Lat (0-255)</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Lon (0-255)</th>
+            </tr>
+          </thead>
+          <tbody id="pulseTable" class="divide-y divide-slate-100 bg-white"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex justify-between"><h2 class="text-lg font-semibold">All Measurements</h2><span id="tableMeta" class="text-sm text-slate-500"></span></div>
+      <div class="max-h-[420px] overflow-auto">
+        <table class="min-w-full divide-y divide-slate-100">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="px-4 py-2 text-xs font-semibold text-left">ICCID</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Time</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">UID</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Relative height</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Standard deviation</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Num. seen</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Num. used</th>
+              <th class="px-4 py-2 text-xs font-semibold text-left">Confidence interval</th>
+            </tr>
+          </thead>
+          <tbody id="measureTable" class="divide-y divide-slate-100 bg-white"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (async () => {
+      // Fetch once; we'll filter client-side
+      const events = await fetch('/data').then(res => res.json());
+
+      // Helpers
+      const toDate = (ra) => new Date(ra.year, ra.month - 1, ra.day, ra.hour, ra.minute, ra.second);
+      const fmtDate = (d) => d.toLocaleString();
+      const getICCID = (e) => e?.identity?.sim?.iccid.substring(0, 6) || e?.identity?.sim?.id.substring(0, 6) || '';
+
+      // Populate ICCID suggestions
+      const iccidSet = new Set(events.map(getICCID).filter(Boolean));
+      const iccidList = document.getElementById('iccidList');
+      iccidSet.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        iccidList.appendChild(opt);
+      });
+
+      // Map init
+      const map = L.map('map');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+      const markerLayer = L.layerGroup().addTo(map);
+
+      // Chart init
+      const ctx = document.getElementById('rhChart').getContext('2d');
+      let rhChart = null;
+
+      // Filter UI
+      const fromEl = document.getElementById('fromDate');
+      const toEl = document.getElementById('toDate');
+      const iccidEl = document.getElementById('iccid');
+      const formEl = document.getElementById('filters');
+      const clearBtn = document.getElementById('clearBtn');
+
+      function applyFilters() {
+        const fromVal = fromEl.value ? new Date(fromEl.value) : null; // midnight local
+        const toVal = toEl.value ? new Date(toEl.value) : null; // midnight local
+        if (toVal) { toVal.setHours(23,59,59,999); }
+        const iccidVal = (iccidEl.value || '').trim();
+
+        return events.filter(e => {
+          const t = toDate(e.receivedAt);
+          if (fromVal && t < fromVal) return false;
+          if (toVal && t > toVal) return false;
+          if (iccidVal && getICCID(e) !== iccidVal) return false;
+          return true;
+        });
+      }
+
+      function computeAllMeasurements(list) {
+        const allMeasurements = [];
+        const uniqueUids = new Set();
+        const sorted = [...list].sort((a,b)=>toDate(b.receivedAt)-toDate(a.receivedAt));
+        for (const e of sorted) {
+          const t = toDate(e.receivedAt);
+          for (const measurement of (e.message?.measurements || [])) {
+            if (!uniqueUids.has(measurement.uid) && Number(measurement.rh) > 0) {
+              uniqueUids.add(measurement.uid);
+            } else {
+              continue;
+            }
+            const nUsed = Number(measurement.n_used) || 0;
+            const std = Number(measurement.std) || 0;
+            const rh = Number(measurement.rh) || 0;
+            const confMin = nUsed > 0 ? rh - 1.96 * std / Math.sqrt(nUsed) : NaN;
+            const confMax = nUsed > 0 ? rh + 1.96 * std / Math.sqrt(nUsed) : NaN;
+            allMeasurements.push({
+              uid: measurement.uid,
+              rh, std,
+              time: t,
+              n_seen: measurement.n_seen,
+              n_used: nUsed,
+              conf_min: confMin,
+              conf_max: confMax,
+              iccid: getICCID(e)
+            });
+          }
+        }
+        allMeasurements.sort((a,b)=>a.uid-b.uid);
+        return allMeasurements;
+      }
+
+      function render() {
+        const filtered = applyFilters();
+        const byTimeDesc = [...filtered].sort((a,b)=>toDate(b.receivedAt)-toDate(a.receivedAt));
+
+        // Latest card (or blanks if none)
+        const latest = byTimeDesc[0];
+        if (latest) {
+          document.getElementById('latestWhen').textContent = fmtDate(toDate(latest.receivedAt));
+          document.getElementById('latestLoc').textContent = `${Number(latest.imt?.latitude).toFixed(4)}, ${Number(latest.imt?.longitude).toFixed(4)}`;
+          document.getElementById('latestTemp').textContent = Number(latest.message?.temperature).toFixed(2);
+          document.getElementById('latestBatt').textContent = (Number(latest.message?.battery) / 1000) || '';
+          document.getElementById('latestCount').textContent = (latest.message?.measurements || []).length;
+        } else {
+          document.getElementById('latestWhen').textContent = '—';
+          document.getElementById('latestLoc').textContent = '—';
+          document.getElementById('latestTemp').textContent = '—';
+          document.getElementById('latestBatt').textContent = '—';
+          document.getElementById('latestCount').textContent = '—';
+        }
+
+        // Map markers
+        markerLayer.clearLayers();
+        if (filtered.length) {
+          const pts = [];
+          filtered.forEach(e => {
+            const lat = Number(e.imt?.latitude), lng = Number(e.imt?.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              pts.push([lat,lng]);
+              // Make marker red if it's the latest event
+              const isLatest = e === byTimeDesc[0];
+              L.circleMarker([lat,lng], {
+                radius: 6,
+                color: isLatest ? 'red' : '#3b82f6',
+                fillColor: isLatest ? 'red' : '#3b82f6',
+                fillOpacity: 0.8
+              }).bindPopup(
+                `<div style='font:14px system-ui;'>`+
+                `<div><strong>Time:</strong> ${fmtDate(toDate(e.receivedAt))}</div>`+
+                `<div><strong>ICCID:</strong> ${getICCID(e)}</div>`+
+                `<div><strong>Temp:</strong> ${Number(e.message?.temperature).toFixed(2)} °C</div>`+
+                `<div><strong>Battery:</strong> ${(Number(e.message?.battery)/1000) || ''} V</div>`+
+                `</div>`
+              ).addTo(markerLayer);
+            }
+          });
+          if (!map._loaded) map.setView(pts[0] || [0,0], 10);
+          try {
+            const bounds = L.latLngBounds(pts);
+            if (pts.length) map.fitBounds(bounds.pad(0.25));
+          } catch {}
+        } else {
+          if (!map._loaded) map.setView([0,0], 2);
+        }
+
+        // Measurements table + chart
+        const allMeasurements = computeAllMeasurements(filtered);
+
+        // Chart (UID on x-axis)
+        const labels = allMeasurements.map(m => `${m.uid}`);
+        const rhValues = allMeasurements.map(m => m.rh);
+        const confTop = allMeasurements.map(m => m.conf_max);
+        const confBot = allMeasurements.map(m => m.conf_min);
+
+        if (rhChart) rhChart.destroy();
+        rhChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              { label: 'RH', type: 'line', backgroundColor: 'rgba(59,130,246,0.2)', borderColor: 'rgba(59,130,246,1)', hoverBorderColor: 'rgba(59,130,246,0.8)', fill: false, tension: 0, data: rhValues, yAxisID: 'y', xAxisID: 'x' },
+              { label: 'BandTop', type: 'line', backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'transparent', pointRadius: 0, fill: 0, tension: 0, data: confTop, yAxisID: 'y', xAxisID: 'x' },
+              { label: 'BandBottom', type: 'line', backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'transparent', pointRadius: 0, fill: 0, tension: 0, data: confBot, yAxisID: 'y', xAxisID: 'x' }
+            ]
+          },
+          options: {
+            scales: {
+              x: { id: 'x', type: 'category', title: { display: true, text: 'UID' } },
+              y: { id: 'y', type: 'linear', position: 'left', title: { display: true, text: 'RH' }, ticks: { stepSize: 1 } }
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    const idx = context.dataIndex;
+                    const m = allMeasurements[idx];
+                    let label = context.dataset.label + ': ' + context.formattedValue;
+                    if (context.dataset.label === 'RH' && m && Number.isFinite(m.conf_min) && Number.isFinite(m.conf_max)) {
+                      label += ` (CI: [${m.conf_min.toFixed(3)}, ${m.conf_max.toFixed(3)}])`;
+                    }
+                    return label;
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        // Pulses table
+        const ptbody = document.getElementById('pulseTable');
+        ptbody.innerHTML = '';
+        byTimeDesc.forEach(e => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class='px-4 py-2 text-sm'>${getICCID(e)}</td>
+            <td class='px-4 py-2 text-sm'>${fmtDate(toDate(e.receivedAt))}</td>
+            <td class='px-4 py-2 text-sm'>${(Number(e.message?.battery)/1000) || ''}</td>
+            <td class='px-4 py-2 text-sm'>${Number(e.message?.temperature).toFixed(2)}</td>
+            <td class='px-4 py-2 text-sm'>${e.message?.latitude ?? ''}</td>
+            <td class='px-4 py-2 text-sm'>${e.message?.longitude ?? ''}</td>
+            `;
+          ptbody.appendChild(tr);
+        });
+        document.getElementById('tablePulse').textContent = `${byTimeDesc.length} rows`;
+
+        // Measurements table
+        const tbody = document.getElementById('measureTable');
+        tbody.innerHTML = '';
+        allMeasurements.forEach(m => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class='px-4 py-2 text-sm'>${m.iccid}</td>
+            <td class='px-4 py-2 text-sm'>${fmtDate(m.time)}</td>
+            <td class='px-4 py-2 text-sm'>${m.uid}</td>
+            <td class='px-4 py-2 text-sm'>${Number(m.rh).toFixed(3)}</td>
+            <td class='px-4 py-2 text-sm'>${Number(m.std).toFixed(3)}</td>
+            <td class='px-4 py-2 text-sm'>${m.n_seen ?? ''}</td>
+            <td class='px-4 py-2 text-sm'>${m.n_used ?? ''}</td>
+            <td class='px-4 py-2 text-sm'>${(Number.isFinite(m.conf_min) && Number.isFinite(m.conf_max)) ? `[${m.conf_min.toFixed(3)}, ${m.conf_max.toFixed(3)}]` : '—'}</td>`;
+          tbody.appendChild(tr);
+        });
+        document.getElementById('tableMeta').textContent = `${allMeasurements.length} rows`;
+      }
+
+      // handle form
+      formEl.addEventListener('submit', (e) => { e.preventDefault(); render(); });
+      clearBtn.addEventListener('click', () => {
+        fromEl.value = '';
+        toEl.value = '';
+        iccidEl.value = '';
+        render();
+      });
+
+      // initial render
+      render();
+    })();
+  </script>
+</body>
+</html>
