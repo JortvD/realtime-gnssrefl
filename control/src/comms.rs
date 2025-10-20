@@ -65,13 +65,13 @@ pub struct Packet { // 5 + n * 5 bytes = 55
 const PACKET_SIZE: usize = PACKET_HEADER_SIZE + (MAX_MEASUREMENT_PACKETS * MEASUREMENT_PACKET_SIZE);
 
 impl Packet {
-    pub fn new(battery: u8, temp: u8) -> Self {
+    pub fn new(battery: u8, temp: u8, charge_state_fraction: u8) -> Self {
         Self {
             battery,
             temp,
             lat: 0,
             lon: 0,
-            charge_state_fraction
+            charge_state_fraction,
             measurements: Vec::new(),
         }
     }

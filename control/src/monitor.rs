@@ -14,7 +14,6 @@ pub async fn task_monitor(
 ) {
     let mut battery_mv: f32 = 0.0;
     let mut chip_temp_c: f32 = 0.0;
-    let mut statefraction: u8 = 0;
     let mut next_adc_measurement = Instant::now();
     let mut charge_state_monitor = ChargeStateMonitor::new();
 
@@ -74,7 +73,7 @@ pub async fn task_monitor(
                 info!("[moni] Charge controller state: {:?}", charge_state);
                 charge_state_monitor.set_state(charge_state);
 
-                statefraction = charge_state_monitor.get_fraction();
+                let statefraction = charge_state_monitor.get_fraction();
                 channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
 
                 let (a,b,c,d) = unpack_fractions(statefraction);
