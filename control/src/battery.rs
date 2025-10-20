@@ -130,7 +130,7 @@ impl Battery {
 
     pub async fn toggle_ce(&mut self) {
         self.pin_CE.set_high();
-        Timer::after_secs(60).await;
+        Timer::after_secs(1).await;
         self.pin_CE.set_low();
     }
 
