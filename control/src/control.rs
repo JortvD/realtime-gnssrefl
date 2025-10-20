@@ -51,6 +51,7 @@ pub async fn task_control(
     // Latest battery and temperature
     let mut battery_mv: Option<u32> = None;
     let mut chip_c: Option<f32> = None;
+    let mut charge_state_fraction: u8 = 0;
 
     {
         let mut storage_lock = storage.lock().await;
@@ -64,19 +65,6 @@ pub async fn task_control(
             info!("[cont] no stored sectors found ({}), starting fresh", result.err().unwrap());
         }
     }
-
-    // TODO: Fill list_measured and list_computed from memory. 
-    // This is for if there are still pending tasks from before power down
-
-    // mon_request_channel.send(MonReqMsg::GetBatVolt).await;
-    // match mon_response_channel.receive().await {
-    //     MonResMsg::BatVoltSuccess { voltage } => {
-    //         info!("Batvolt = {}", voltage);
-    //     }
-    //     MonResMsg::BatVoltFail => {
-    //         info!("Measuring battery voltage failed");
-    //     }
-    // }
 
     loop {
         // Send out tasks
@@ -245,6 +233,7 @@ pub async fn task_control(
                     MonResMsg::BatVoltFail => battery_mv = None,
                     MonResMsg::TempSuccess { temp_c } => chip_c = Some(temp_c),
                     MonResMsg::TempFail => chip_c = None,
+                    MonResMsg::ChargeStateFraction { fraction } => charge_state_fraction = fraction,
                 }
             }
         }

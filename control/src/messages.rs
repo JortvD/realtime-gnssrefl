@@ -65,7 +65,8 @@ pub enum CommResMsg{
 
 pub enum MonReqMsg{
     GetBatVolt,
-    GetTemp
+    GetTemp,
+    ResetChargeStateMonitor,
 }
 
 pub enum MonResMsg{
@@ -76,5 +77,8 @@ pub enum MonResMsg{
     TempSuccess{
         temp_c: f32
     },
-    TempFail
+    TempFail,
+    ChargeStateFraction {
+        fraction: u8
+    }
 }
