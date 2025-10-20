@@ -117,7 +117,9 @@ pub async fn task_control(
                 sectors: sectors_to_send, 
                 config: config.clone(), 
                 battery_mv: battery_mv, 
-                temp_c: chip_c }).await;
+                temp_c: chip_c,
+                charge_state_fraction
+            }).await;
         }
 
         // Wait for responses

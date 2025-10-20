@@ -49,7 +49,8 @@ pub enum CommReqMsg{
         sectors: Vec<Sector, MAX_SECTORS>,
         config: Config,
         battery_mv: Option<u32>,
-        temp_c: Option<f32>
+        temp_c: Option<f32>,
+        charge_state_fraction: u8,
     },
 }
 
