@@ -22,14 +22,19 @@ impl RealTime {
         }
     }
 
+    pub fn get_time_since_update(&self) -> u32 {
+        Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR)
+        .duration_since(self.ref_pico_time).as_secs() as u32
+    }
+
     pub fn get_real_time(&self) -> u32 {
-        let time = self.ref_real_time + Instant::from_secs(Instant::now().as_secs()*SPEEDUP_FACTOR)
-        .duration_since(self.ref_pico_time).as_secs() as u32;
+        let time = self.ref_real_time + self.get_time_since_update();
         (time % 86400) as u32
     }
 
-    pub fn get_days(&self) -> u32 {
-        return self.ref_real_date;
+    pub fn get_real_date(&self) -> u32 {
+        let extra_days = (self.ref_real_time + self.get_time_since_update()) / SECONDS_PER_DAY;
+        self.ref_real_date + extra_days
     }
 
     pub fn update_date(&mut self, date: u32) {
@@ -57,13 +62,13 @@ impl RealTime {
         );
     }
 
-pub fn next_or_first(vec: &[u32], x: u32) -> (u32, usize) {
+pub fn next_or_first(vec: &[u32], x: u32) -> usize {
     vec.iter()
         .enumerate()
         .filter(|&(_, &v)| v > x)
-        .min_by_key(|&(_, v)| v)   
-        .map(|(i, &v)| (v, i))
-        .unwrap_or((vec[0], 0))  
+        .min_by_key(|&(_, v)| v)
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 
@@ -86,9 +91,35 @@ pub fn next_or_first(vec: &[u32], x: u32) -> (u32, usize) {
         diff.min(wrapped_diff)
     }
     
-    pub fn get_timer(&self, sleep_until: u32) -> Timer {
-        let now = self.get_real_time();
-        Timer::after_millis(RealTime::subtract_wrapping(sleep_until, now) as u64 * 1000 / SPEEDUP_FACTOR)
+    pub fn get_timer(&self, sleep_time: u32, sleep_date: u32) -> Timer {
+        let now_time = self.get_real_time();
+        let now_date = self.get_real_date();
+
+        let mut total_sleep_secs = 0u32;
+        
+        if sleep_time >= now_time {
+            total_sleep_secs += sleep_time - now_time;
+        } else {
+            total_sleep_secs += SECONDS_PER_DAY - (now_time - sleep_time);
+        }
+
+        if sleep_time == now_time && sleep_date > now_date {
+            total_sleep_secs += SECONDS_PER_DAY;
+        }
+
+        info!(
+            "[time] sleeping for {} s to reach time {} ({}) on date {} ({}). Now is {} ({}) on date {} ({})",
+            total_sleep_secs,
+            sleep_time,
+            utils::seconds_to_time_str(sleep_time).as_str(),
+            sleep_date,
+            utils::date_to_str(sleep_date).as_str(),
+            now_time,
+            utils::seconds_to_time_str(now_time).as_str(),
+            now_date,
+            utils::date_to_str(now_date).as_str()
+        );
+        Timer::after_millis(total_sleep_secs as u64 * 1000 / SPEEDUP_FACTOR)
     }
 }
 

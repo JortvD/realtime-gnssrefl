@@ -67,7 +67,7 @@ static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg,
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
-pub const GNSS_PRE_UART_BAUDRATE: u32 = 9_600;
+pub const GNSS_PRE_UART_BAUDRATE: u32 = 115_200;
 pub const GNSS_POST_UART_BAUDRATE: u32 = 115_200;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 
@@ -115,9 +115,9 @@ async fn main(spawner: Spawner) {
     info!("[main] clock freq: {} MHz", clk_sys_freq() / 1_000_000);
 
     // Watchdog
-    // let mut wdg = Watchdog::new(p.WATCHDOG);
-    // wdg.pause_on_debug(false);
-    // wdg.start(Duration::from_secs(10));
+    let mut wdg = Watchdog::new(p.WATCHDOG);
+    wdg.pause_on_debug(false);
+    wdg.start(Duration::from_secs(16));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);
@@ -181,13 +181,13 @@ async fn main(spawner: Spawner) {
     info!("[main] initialized peripherals");
 
     info!("[main] starting watchdog feeder task");
-    // static CELL: StaticCell<Watchdog> = StaticCell::new();
-    // let wdg: &'static mut Watchdog = CELL.init(wdg);
+    static CELL: StaticCell<Watchdog> = StaticCell::new();
+    let wdg: &'static mut Watchdog = CELL.init(wdg);
 
-    // let result = spawner.spawn(watchdog_feeder(wdg));
-    // if result.is_err() {
-    //     error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
-    // }
+    let result = spawner.spawn(watchdog_feeder(wdg));
+    if result.is_err() {
+        error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
+    }
 
     if dump_pin.is_low() {
         info!("[main] dump pin is low, dumping storage and halting");

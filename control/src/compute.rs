@@ -607,9 +607,8 @@ where
                                 || (
                                     config.post_min_azimuth <= config.post_max_azimuth
                                         && (sample.get_azimuth() < config.post_min_azimuth as u16
-                                            && sample.get_azimuth() > config.post_max_azimuth as u16)
+                                            || sample.get_azimuth() > config.post_max_azimuth as u16)
                                 )
-                                || sample.get_azimuth() > config.post_max_azimuth as u16 
                             {
                                 continue;
                             }

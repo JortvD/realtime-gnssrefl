@@ -296,7 +296,7 @@ impl NMEAParser {
                         && (azim < config.pre_min_azimuth || 
                         azim > config.pre_max_azimuth)) ||
                     (config.pre_min_elevation <= config.pre_max_elevation 
-                        && (azim < config.pre_min_azimuth && 
+                        && (azim < config.pre_min_azimuth || 
                         azim > config.pre_max_azimuth)) {
                     continue;
                 }
