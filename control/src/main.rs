@@ -67,7 +67,7 @@ static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg,
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
-pub const GNSS_PRE_UART_BAUDRATE: u32 = 115_200;
+pub const GNSS_PRE_UART_BAUDRATE: u32 = 9_600;
 pub const GNSS_POST_UART_BAUDRATE: u32 = 115_200;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 

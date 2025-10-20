@@ -258,10 +258,10 @@ pub async fn task_control(
 }
 
 pub async fn save_sectors(storage: &'static StorageType, sectors: &mut SectorList) {
-    if sectors.len() == 0 {
-        info!("[cont] no sectors to save, not saving");
-        return;
-    }
+    // if sectors.len() == 0 {
+    //     info!("[cont] no sectors to save, not saving");
+    //     return;
+    // }
     if sectors.has_changed() == false {
         info!("[cont] no changes to sectors, not saving");
         return;
