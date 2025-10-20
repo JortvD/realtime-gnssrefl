@@ -137,18 +137,14 @@ impl ChargeStateMonitor {
     }
 
     pub fn set_state(&mut self, charge_state: ChargeState){
-        if charge_state == self.current_state {
-            return;
-        }
+        let passed_time = (Instant::now() - self.last_time).as_secs();
 
-        // Every state is minimal 1 second
-        let passed_time = (Instant::now() - self.last_time).as_secs().max(1); 
-
+        //Make sure that even <1 seconds in a state is represented
         match self.current_state {
-            ChargeState::Charging => self.time_charging += passed_time,
-            ChargeState::Completed => self.time_completed += passed_time,
-            ChargeState::RecoverableFault => self.time_recoverable += passed_time,
-            ChargeState::NonRecoverableFault => self.time_nonrecoverable += passed_time,
+            ChargeState::Charging => self.time_charging = (self.time_charging+passed_time).max(1),
+            ChargeState::Completed => self.time_completed = (self.time_completed+passed_time).max(1),
+            ChargeState::RecoverableFault => self.time_recoverable = (self.time_recoverable+passed_time).max(1),
+            ChargeState::NonRecoverableFault => self.time_nonrecoverable = (self.time_nonrecoverable+passed_time).max(1),
             ChargeState::Unknown => {},
         }
 
