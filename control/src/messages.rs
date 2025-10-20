@@ -49,7 +49,8 @@ pub enum CommReqMsg{
         sectors: Vec<Sector, MAX_SECTORS>,
         config: Config,
         battery_mv: Option<u32>,
-        temp_c: Option<f32>
+        temp_c: Option<f32>,
+        charge_state_fraction: u8,
     },
 }
 
@@ -65,7 +66,8 @@ pub enum CommResMsg{
 
 pub enum MonReqMsg{
     GetBatVolt,
-    GetTemp
+    GetTemp,
+    ResetChargeStateMonitor,
 }
 
 pub enum MonResMsg{
@@ -76,5 +78,8 @@ pub enum MonResMsg{
     TempSuccess{
         temp_c: f32
     },
-    TempFail
+    TempFail,
+    ChargeStateFraction {
+        fraction: u8
+    }
 }

@@ -58,6 +58,7 @@ pub struct Packet { // 5 + n * 5 bytes = 55
     temp: u8,
     lat: u8,
     lon: u8,
+    charge_state_fraction: u8,
     measurements: Vec<MeasurementPacket, MAX_MEASUREMENT_PACKETS>,
 }
 
@@ -70,6 +71,7 @@ impl Packet {
             temp,
             lat: 0,
             lon: 0,
+            charge_state_fraction
             measurements: Vec::new(),
         }
     }
@@ -89,6 +91,7 @@ impl Packet {
         data.extend_from_slice(&self.temp.to_le_bytes()).ok();
         data.extend_from_slice(&self.lat.to_le_bytes()).ok();
         data.extend_from_slice(&self.lon.to_le_bytes()).ok();
+        data.extend_from_slice(&self.charge_state_fraction.to_le_bytes()).ok();
         for measurement in self.measurements.iter() {
             let meas_bytes = measurement.to_bytes();
             data.extend_from_slice(&meas_bytes).ok();
@@ -112,7 +115,7 @@ pub async fn task_comms(
             Timer::after_secs(u32::MAX as u64)
         ).await;
         match select {
-            Either::First(CommReqMsg::Send { sectors, config, battery_mv, temp_c }) => {
+            Either::First(CommReqMsg::Send { sectors, config, battery_mv, temp_c, charge_state_fraction  }) => {
                 let uids: heapless::Vec<u32, MAX_SECTORS> = sectors.iter()
                     .map(|s| s.get_uid())
                     .take(MAX_SECTORS)
@@ -124,7 +127,9 @@ pub async fn task_comms(
                     sectors, 
                     config.num_send_measurements, 
                     battery_mv, 
-                    temp_c).await;
+                    temp_c,
+                    charge_state_fraction
+                ).await;
                 if result.is_err() {
                     info!("[comm] communication failed");
                     channel_res.send(CommResMsg::Fail { 
@@ -156,7 +161,8 @@ async fn run_comms(
     sectors: Vec<Sector, MAX_SECTORS>,
     num_measurements: u32,
     battery_mv: Option<u32>,
-    temp_c: Option<f32>
+    temp_c: Option<f32>,
+    charge_state_fraction: u8,
 ) -> Result<(), CommsError> {
     info!("[comm] Turning on RockBlock");
     rockblock.power_on().await;
@@ -189,7 +195,8 @@ async fn run_comms(
 
     let mut packet = Packet::new(
         scaled_bat_mv,
-        scaled_temp_c
+        scaled_temp_c,
+        charge_state_fraction
     );
 
     let mut highest_uid = 0;

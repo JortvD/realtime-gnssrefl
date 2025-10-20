@@ -52,6 +52,8 @@ pub async fn task_control(
     // Latest battery and temperature
     let mut battery_mv: Option<u32> = None;
     let mut chip_c: Option<f32> = None;
+    let mut charge_state_fraction: u8 = 0;
+    let mut reset_charge_state_monitor = false;
 
     {
         let mut storage_lock = storage.lock().await;
@@ -68,19 +70,6 @@ pub async fn task_control(
             info!("[cont] no stored sectors found ({}), starting fresh", result.err().unwrap());
         }
     }
-
-    // TODO: Fill list_measured and list_computed from memory. 
-    // This is for if there are still pending tasks from before power down
-
-    // mon_request_channel.send(MonReqMsg::GetBatVolt).await;
-    // match mon_response_channel.receive().await {
-    //     MonResMsg::BatVoltSuccess { voltage } => {
-    //         info!("Batvolt = {}", voltage);
-    //     }
-    //     MonResMsg::BatVoltFail => {
-    //         info!("Measuring battery voltage failed");
-    //     }
-    // }
 
     loop {
         // Send out tasks
@@ -133,7 +122,16 @@ pub async fn task_control(
                 sectors: sectors_to_send, 
                 config: config.clone(), 
                 battery_mv: battery_mv, 
-                temp_c: chip_c }).await;
+                temp_c: chip_c,
+                charge_state_fraction
+            }).await;
+        }
+
+        // Reset charge state monitor
+        if reset_charge_state_monitor {
+            info!("[cont] Resetting charge state monitor");
+            mon_request_channel.send(MonReqMsg::ResetChargeStateMonitor).await;
+            reset_charge_state_monitor = false;
         }
 
         // Wait for responses
@@ -232,6 +230,7 @@ pub async fn task_control(
                         for &sector_uid in sector_uids.iter() {
                             sectors.delete_uid(sector_uid);
                         }
+                        reset_charge_state_monitor = true;
                         sectors.set_changed(true);
                     }
                     CommResMsg::Fail { sector_uids, error } => {
@@ -251,6 +250,7 @@ pub async fn task_control(
                     MonResMsg::BatVoltFail => battery_mv = None,
                     MonResMsg::TempSuccess { temp_c } => chip_c = Some(temp_c),
                     MonResMsg::TempFail => chip_c = None,
+                    MonResMsg::ChargeStateFraction { fraction } => charge_state_fraction = fraction,
                 }
             }
         }

@@ -1,14 +1,12 @@
 //Stat1 = fault 
 //Stat2 = charge
 
-//HH - Charge completed
-//HL - Charging
-//LH - Rec. fault
-//HL - Non rec. fault
-
 use defmt::info;
+use defmt::Format;
 use embassy_time::with_timeout;
 use embassy_time::Duration;
+use embassy_futures::select::select;
+use embassy_time::Timer;
 
 use crate::gpio;
 use crate::adc;
@@ -20,6 +18,7 @@ pub struct Battery {
     pin_voltage: adc::Channel<'static>,
     pin_temp: adc::Channel<'static>,
     adc: adc::Adc<'static, adc::Async>,
+    chargestate: ChargeState,
 }
 
 impl Battery {
@@ -37,6 +36,7 @@ impl Battery {
             pin_voltage, 
             pin_temp,
             adc,
+            chargestate: ChargeState::Unknown,
         }
     }
 
@@ -103,6 +103,37 @@ impl Battery {
         Ok(temp_c)
     }
 
+    pub async fn wait_state_change (&mut self) -> ChargeState {
+        if self.get_state() == self.chargestate {
+            let s1 = self.pin_stat1.wait_for_any_edge();
+            let s2 = self.pin_stat2.wait_for_any_edge();
+
+            select(s1,s2).await;
+        }
+
+        self.chargestate = self.get_state();
+        self.chargestate
+    }
+
+    pub fn get_state (&mut self) -> ChargeState {
+        //HH - Completed
+        //HL - Charging
+        //LH - Rec. fault
+        //HL - Non rec. fault
+        match (self.pin_stat1.is_high(), self.pin_stat2.is_high()) {
+            (true, true) => ChargeState::Completed,
+            (true, false) => ChargeState::Charging,
+            (false, true) => ChargeState::RecoverableFault,
+            (false, false) => ChargeState::NonRecoverableFault 
+        }
+    }
+
+    pub async fn toggle_ce(&mut self) {
+        self.pin_CE.set_high();
+        Timer::after_secs(1).await;
+        self.pin_CE.set_low();
+    }
+
 }
 
 fn convert_to_celsius(raw_temp: f32) -> f32 {
@@ -111,4 +142,13 @@ fn convert_to_celsius(raw_temp: f32) -> f32 {
     let sign = if temp < 0.0 { -1.0 } else { 1.0 };
     let rounded_temp_x10: i16 = ((temp * 10.0) + 0.5 * sign) as i16;
     (rounded_temp_x10 as f32) / 10.0
+}
+
+#[derive(Format, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChargeState {
+    Unknown,
+    Completed,
+    Charging,
+    RecoverableFault,
+    NonRecoverableFault
 }
