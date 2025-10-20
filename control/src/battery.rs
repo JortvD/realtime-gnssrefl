@@ -111,7 +111,8 @@ impl Battery {
             select(s1,s2).await;
         }
 
-        self.get_state()
+        self.chargestate = self.get_state();
+        self.chargestate
     }
 
     pub fn get_state (&mut self) -> ChargeState {

@@ -54,8 +54,6 @@ pub async fn task_monitor(
                     }
                 }
 
-                channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
-
                 next_adc_measurement = next_adc_measurement.saturating_add(Duration::from_secs(30));
             }
             Either3::Second(message) => {
@@ -77,9 +75,11 @@ pub async fn task_monitor(
                 charge_state_monitor.set_state(charge_state);
 
                 statefraction = charge_state_monitor.get_fraction();
+                channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
+
                 let (a,b,c,d) = unpack_fractions(statefraction);
                 info!(
-                    "[moni] State fraction byte: 0x{:02X}, a: 0x{:X}, b: 0x{:X}, c: 0x{:X}, d: 0x{:X}",
+                    "[moni] ChargeState fraction byte: 0x{:02X}, completed: {:?}, charging: {:?}, recoverable: {:?}, nonrecoverable: {:?}",
                     statefraction, a, b, c, d
                 );
 
@@ -137,7 +137,8 @@ impl ChargeStateMonitor {
     }
 
     pub fn set_state(&mut self, charge_state: ChargeState){
-        let passed_time = Instant::now() - self.last_time; 
+        // Every state is minimal 1 second
+        let passed_time = (Instant::now() - self.last_time).min(Duration::from_secs(1)); 
 
         match self.current_state {
             ChargeState::Charging => self.time_charging += passed_time.as_secs(),
@@ -151,7 +152,9 @@ impl ChargeStateMonitor {
         self.last_time = Instant::now();
     }
 
-    pub fn get_fraction(&self) -> u8 {
+    pub fn get_fraction(&mut self) -> u8 {
+        self.set_state(self.current_state);
+
         let max_time = max(
             max(self.time_completed, self.time_charging),
             max(self.time_recoverable, self.time_nonrecoverable),

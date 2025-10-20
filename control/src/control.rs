@@ -52,6 +52,7 @@ pub async fn task_control(
     let mut battery_mv: Option<u32> = None;
     let mut chip_c: Option<f32> = None;
     let mut charge_state_fraction: u8 = 0;
+    let mut reset_charge_state_monitor = false;
 
     {
         let mut storage_lock = storage.lock().await;
@@ -120,6 +121,13 @@ pub async fn task_control(
                 temp_c: chip_c,
                 charge_state_fraction
             }).await;
+        }
+
+        // Reset charge state monitor
+        if reset_charge_state_monitor {
+            info!("[cont] Resetting charge state monitor");
+            mon_request_channel.send(MonReqMsg::ResetChargeStateMonitor).await;
+            reset_charge_state_monitor = false;
         }
 
         // Wait for responses
@@ -216,6 +224,7 @@ pub async fn task_control(
                         for &sector_uid in sector_uids.iter() {
                             sectors.delete_uid(sector_uid);
                         }
+                        reset_charge_state_monitor = true;
                         sectors.set_changed(true);
                     }
                     CommResMsg::Fail { sector_uids, error } => {
