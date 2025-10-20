@@ -86,10 +86,17 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
 
     loop {
         let nmeaburst= with_timeout(Duration::from_secs(config.measure_timeout as u64), gnss_sensor.read_burst()).await.map_err(|_| SectorFailError::Timeout)?;
-        let burst = parser.parse_burst(&nmeaburst, false);
+        let burst = parser.parse_burst(&nmeaburst, true);
         let time_str = seconds_to_time_str(burst.time);
 
-        if sector.is_time_before_sector(burst.time) {
+        if burst.date.is_none() {
+            info!("[meas][{}] no valid GPS date in burst, skipping", time_str.as_str());
+            continue;
+        }
+
+        let burst_date = burst.date.unwrap();
+
+        if sector.is_before_sector(burst.time, burst_date) {
             info!("[meas][{}] time is before current sector, skipping", time_str.as_str());
             continue;
         }
@@ -104,14 +111,14 @@ async fn run_measure(gnss_sensor: &mut GNSSSensor, storage: &'static StorageType
             continue;
         }
 
-        if sector.is_time_after_sector(burst.time) {
+        if sector.is_after_sector(burst.time, burst_date) {
             if last_bin_id == sector.get_start_bin_index() && bin_data.len() == 0 {
                 info!("[meas][{}] time is later than current sector but no data collected, FAILING", time_str.as_str());
                 return Err(SectorFailError::NoData);
             }
 
             deviation = Deviation::new(burst.time, Instant::now() - nmeaburst.duration);
-            date = burst.date.unwrap_or(0);
+            date = burst_date;
             info!("[meas][{}] time is later than current sector, STOPPING", time_str.as_str());
             break;
         }

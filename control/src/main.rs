@@ -67,7 +67,7 @@ static COMPUTE_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, ComputeResMsg,
 static COMM_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, CommResMsg, 8> = Channel::new();
 static MONITOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, MonResMsg, 8> = Channel::new();
 
-pub const GNSS_PRE_UART_BAUDRATE: u32 = 9_600;
+pub const GNSS_PRE_UART_BAUDRATE: u32 = 115_200;
 pub const GNSS_POST_UART_BAUDRATE: u32 = 115_200;
 pub const ROCKBLOCK_UART_BAUDRATE: u32 = 230_400;
 
@@ -117,7 +117,7 @@ async fn main(spawner: Spawner) {
     // Watchdog
     let mut wdg = Watchdog::new(p.WATCHDOG);
     wdg.pause_on_debug(false);
-    wdg.start(Duration::from_secs(10));
+    wdg.start(Duration::from_secs(16));
     
     // Battery peripherals
     let pin_bat_stat1 = Input::new(p.PIN_22, Pull::None);

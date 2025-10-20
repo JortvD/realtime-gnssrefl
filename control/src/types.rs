@@ -94,15 +94,25 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("02:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("19:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("02:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("12:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("14:30:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("17:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("19:30:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
+
+        mid_times.push(utils::time_str_to_seconds("23:59:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("00:04:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("23:57:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:03:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("23:50:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:10:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:20:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:30:00").unwrap()).unwrap();
         
         Self {
             pre_min_elevation: 5,
@@ -124,7 +134,7 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 30,
+            bins_per_sector: 1,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,
@@ -174,7 +184,7 @@ impl SectorList {
         for i in 0..num_sectors {
             let start = SECTOR_LIST_HEADER_SIZE + i as usize * SECTOR_SIZE;
             let end = start + SECTOR_SIZE;
-            let mut sector = Sector::from_byes(&data[start..end]);
+            let mut sector = Sector::from_bytes(&data[start..end]);
 
             if update {
                 match sector.state {
@@ -282,7 +292,7 @@ pub enum SectorState {
     DONE
 }
 
-pub const SECTOR_SIZE: usize = 38;
+pub const SECTOR_SIZE: usize = 41;
 
 #[derive(Clone, Debug)]
 pub struct Sector {
@@ -292,6 +302,7 @@ pub struct Sector {
     measurement_index: u32,
     start_bin_index: u32,
     start_time: u32,
+    start_day: u32,
     n_bins: u32,
 
     seconds_per_bin: u32,
@@ -302,13 +313,14 @@ pub struct Sector {
 }
 
 impl Sector {
-    pub fn new(uid: u32, midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, n_bins: u32, seconds_per_bin: u32, state: SectorState) -> Self {
+    pub fn new(uid: u32, midpoint_index: u32, measurement_index: u32, start_bin_index: u32, start_time: u32, start_day: u32, n_bins: u32, seconds_per_bin: u32, state: SectorState) -> Self {
         Self {
             uid,
             midpoint_index,
             measurement_index,
             start_bin_index,
             start_time,
+            start_day,
             n_bins,
             seconds_per_bin,
             state,
@@ -324,9 +336,10 @@ impl Sector {
         data[8..12].copy_from_slice(&self.measurement_index.to_le_bytes());
         data[12..16].copy_from_slice(&self.start_bin_index.to_le_bytes());
         data[16..20].copy_from_slice(&self.start_time.to_le_bytes());
-        data[20..24].copy_from_slice(&self.n_bins.to_le_bytes());
-        data[24..28].copy_from_slice(&self.seconds_per_bin.to_le_bytes());
-        data[28] = match self.state {
+        data[20..24].copy_from_slice(&self.start_day.to_le_bytes());
+        data[24..28].copy_from_slice(&self.n_bins.to_le_bytes());
+        data[28..32].copy_from_slice(&self.seconds_per_bin.to_le_bytes());
+        data[32] = match self.state {
             SectorState::AWAITING => 0,
             SectorState::TO_MEASURE => 1,
             SectorState::MEASURING => 2,
@@ -336,20 +349,21 @@ impl Sector {
             SectorState::COMMUNICATING => 6,
             SectorState::DONE => 7,
         };
-        data[29..33].copy_from_slice(&self.lat.to_le_bytes());
-        data[33..37].copy_from_slice(&self.lon.to_le_bytes());
+        data[33..37].copy_from_slice(&self.lat.to_le_bytes());
+        data[37..41].copy_from_slice(&self.lon.to_le_bytes());
         data
     }
 
-    pub fn from_byes(data: &[u8]) -> Self {
+    pub fn from_bytes(data: &[u8]) -> Self {
         let uid = u32::from_le_bytes(data[0..4].try_into().unwrap());
         let midpoint_index = u32::from_le_bytes(data[4..8].try_into().unwrap());
         let measurement_index = u32::from_le_bytes(data[8..12].try_into().unwrap());
         let start_bin_index = u32::from_le_bytes(data[12..16].try_into().unwrap());
         let start_time = u32::from_le_bytes(data[16..20].try_into().unwrap());
-        let n_bins = u32::from_le_bytes(data[20..24].try_into().unwrap());
-        let seconds_per_bin = u32::from_le_bytes(data[24..28].try_into().unwrap());
-        let state = match data[28] {
+        let start_day = u32::from_le_bytes(data[20..24].try_into().unwrap());
+        let n_bins = u32::from_le_bytes(data[24..28].try_into().unwrap());
+        let seconds_per_bin = u32::from_le_bytes(data[28..32].try_into().unwrap());
+        let state = match data[32] {
             0 => SectorState::AWAITING,
             1 => SectorState::TO_MEASURE,
             2 => SectorState::MEASURING,
@@ -360,14 +374,15 @@ impl Sector {
             7 => SectorState::DONE,
             _ => SectorState::AWAITING,
         };
-        let lat = f32::from_le_bytes(data[29..33].try_into().unwrap());
-        let lon = f32::from_le_bytes(data[33..37].try_into().unwrap());
+        let lat = f32::from_le_bytes(data[33..37].try_into().unwrap());
+        let lon = f32::from_le_bytes(data[37..41].try_into().unwrap());
         Self {
             uid,
             midpoint_index,
             measurement_index,
             start_bin_index,
             start_time,
+            start_day,
             n_bins,
             seconds_per_bin,
             state,
@@ -402,7 +417,7 @@ impl Sector {
     }
 
     pub fn get_end_time(&self) -> u32 {
-        self.start_time + self.n_bins * self.seconds_per_bin
+        (self.start_time + self.n_bins * self.seconds_per_bin) % 86400
     }
 
     pub fn get_lat(&self) -> f32 {
@@ -432,12 +447,22 @@ impl Sector {
         bin_id % NUM_BINS as u32
     }
 
-    pub fn is_time_before_sector(&self, time: u32) -> bool {
-        time < self.get_start_time()
+    pub fn is_before_sector(&self, time: u32, date: u32) -> bool {
+        time < self.get_start_time() && date <= self.start_day
     }
 
-    pub fn is_time_after_sector(&self, time: u32) -> bool {
-        time >= self.get_end_time()
+    pub fn ends_next_day(&self) -> bool {
+        let end_time = self.get_end_time();
+        end_time < self.start_time
+    }
+
+    pub fn is_after_sector(&self, time: u32, date: u32) -> bool {
+        let end_day = if self.ends_next_day() {
+            self.start_day + 1
+        } else {
+            self.start_day
+        };
+        time >= self.get_end_time() && date >= end_day
     }
 
     pub fn is_succeeding(&self, previous: &Sector) -> bool {
@@ -479,7 +504,7 @@ impl Measurement {
         }
     }
 
-    pub fn from_bytes(data: &[u8; MEASUREMENT_SIZE]) -> Self {
+    pub fn from_bytes(data: &[u8; MEASUREMENT_SIZE]) -> Option<Self> {
         let start_time = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let end_time = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let num_seen = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
@@ -489,6 +514,7 @@ impl Measurement {
         let lat = f32::from_le_bytes([data[24], data[25], data[26], data[27]]);
         let lon = f32::from_le_bytes([data[28], data[29], data[30], data[31]]);
         // info!("Header: {:?} -> {},{},{},{},{}", &data[0..20], start_time, end_time, num_seen, mean, std);
+
         let mut observations = Vec::<Observation, MAX_MEASUREMENT_OBSERVATIONS>::new();
 
         for i in 0..MAX_MEASUREMENT_OBSERVATIONS {
@@ -500,7 +526,7 @@ impl Measurement {
             }
         }
 
-        Self {
+        Some(Self {
             uid,
             num_seen,
             observations,
@@ -510,7 +536,7 @@ impl Measurement {
             std,
             lat,
             lon,
-        }
+        })
     }
 
     pub fn push(&mut self, obs: Observation) {

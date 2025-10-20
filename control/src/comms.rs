@@ -56,22 +56,27 @@ const MAX_MEASUREMENT_PACKETS: usize = 10;
 pub struct Packet { // 5 + n * 5 bytes = 55
     battery: u8,
     temp: u8,
-    pub lat: u8,
-    pub lon: u8,
+    lat: u8,
+    lon: u8,
     measurements: Vec<MeasurementPacket, MAX_MEASUREMENT_PACKETS>,
 }
 
 const PACKET_SIZE: usize = PACKET_HEADER_SIZE + (MAX_MEASUREMENT_PACKETS * MEASUREMENT_PACKET_SIZE);
 
 impl Packet {
-    pub fn new(battery: u8, temp: u8, lat: u8, lon: u8) -> Self {
+    pub fn new(battery: u8, temp: u8) -> Self {
         Self {
             battery,
             temp,
-            lat,
-            lon,
+            lat: 0,
+            lon: 0,
             measurements: Vec::new(),
         }
+    }
+
+    pub fn set_location(&mut self, lat: u8, lon: u8) {
+        self.lat = lat;
+        self.lon = lon;
     }
 
     pub fn push(&mut self, measurement: MeasurementPacket) -> Result<(), ()> {
@@ -108,13 +113,11 @@ pub async fn task_comms(
         ).await;
         match select {
             Either::First(CommReqMsg::Send { sectors, config, battery_mv, temp_c }) => {
-                let mut uids: [u32; MAX_SECTORS] = [0; MAX_SECTORS];
-                let mut count = 0;
-                for s in sectors.iter() {
-                    uids[count] = s.get_uid();
-                    count += 1;
-                }
-                info!("[comm] starting communication for sectors {:?}", &uids[..count]);
+                let uids: heapless::Vec<u32, MAX_SECTORS> = sectors.iter()
+                    .map(|s| s.get_uid())
+                    .take(MAX_SECTORS)
+                    .collect();
+                info!("[comm] starting communication for sectors {:?}", uids.as_slice());
                 let result = run_comms(
                     &mut rockblock, 
                     storage, 
@@ -125,12 +128,12 @@ pub async fn task_comms(
                 if result.is_err() {
                     info!("[comm] communication failed");
                     channel_res.send(CommResMsg::Fail { 
-                        sector_uids: heapless::Vec::from_slice(&uids[..count]).unwrap(),
+                        sector_uids: uids,
                         error: result.unwrap_err() 
                     }).await;
                 } else {
                     channel_res.send(CommResMsg::Success { 
-                        sector_uids: heapless::Vec::from_slice(&uids[..count]).unwrap(),
+                        sector_uids: uids,
                     }).await;
                 }
             }
@@ -158,7 +161,9 @@ async fn run_comms(
     info!("[comm] Turning on RockBlock");
     rockblock.power_on().await;
     if rockblock.status != crate::rockblock::RockBlock9704Status::Unchecked {
-        info!("[comm] RockBlock not ready to be checked, aborting comms");
+        info!("[comm] RockBlock not ready to be checked, aborting comms and powering off");
+        rockblock.power_off().await;
+        info!("[comm] RockBlock powered off");
         return Err(CommsError::RockBlockNoPower);
     }
     info!("[comm] Checking RockBlock status");
@@ -183,14 +188,12 @@ async fn run_comms(
     }; 
 
     let mut packet = Packet::new(
-        scaled_bat_mv ,
-        scaled_temp_c,
-        0, 
-        0
+        scaled_bat_mv,
+        scaled_temp_c
     );
 
-    let mut highest_uid = u32::MIN;
-    let mut highest_index = u32::MIN;
+    let mut highest_uid = 0;
+    let mut highest_index = 0;
     let mut lat = 0f32;
     let mut lon = 0f32;
 
@@ -210,7 +213,7 @@ async fn run_comms(
     }
 
     for i in 1..(num_measurements - sectors.len() as u32 + 1) {
-        let index = highest_index - i % NUM_MEASUREMENTS as u32;
+        let index = (highest_index - i) % NUM_MEASUREMENTS as u32;
         if let Ok(measurement) = get_measurement_packet(storage, index).await {
             if packet.push(measurement).is_err() {
                 info!("[comm] Packet full, stopping adding measurements");
@@ -219,9 +222,10 @@ async fn run_comms(
         }
     }
 
-    // Save quantized values in packet
-    packet.lat = coord_to_u8(lat, 1000.0);
-    packet.lon = coord_to_u8(lon, 1000.0);
+    packet.set_location(
+        coord_to_u8(lat, 1000.0),
+        coord_to_u8(lon, 1000.0)
+    );
 
     let data = packet.to_bytes();
     info!("[comm] Sending packet with {} measurements, total size {} bytes", packet.measurements.len(), data.len());
@@ -231,6 +235,7 @@ async fn run_comms(
     let data_slice = data.as_slice();
     let len = data_slice.len().min(BODY_SIZE);
     body[..len].copy_from_slice(&data_slice[..len]);
+
     let message = IMTMessage::new(
         IMT_DEFAULT_TOPIC,
         body,
@@ -248,20 +253,22 @@ async fn run_comms(
     }
 
     let result = rockblock.send_message(message).await;
-    if result.is_err() {
-        info!("[comm] RockBlock send failed {} after {} ms", result.unwrap_err(), (Instant::now() - start).as_millis());
-        info!("[comm] Turning off RockBlock");
-        rockblock.power_off().await;
-        info!("[comm] RockBlock powered off");
-        return Err(CommsError::RockBlockSendFail);
+    let is_error = result.is_err();
+    if let Err(err) = result {
+        info!("[comm] RockBlock send failed {} after {} ms", &err, (Instant::now() - start).as_millis());
+    } else {
+        info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
     }
-    info!("[comm] Packet sent in {} ms", (Instant::now() - start).as_millis());
 
     info!("[comm] Turning off RockBlock");
     rockblock.power_off().await;
     info!("[comm] RockBlock powered off");
 
-    Ok(())
+    if is_error {
+        Err(CommsError::RockBlockSendFail)
+    } else {
+        Ok(())
+    }
 }
 
 async fn get_measurement_packet(storage: &'static StorageType, measurement_index: u32) -> Result<MeasurementPacket, CommsError> {

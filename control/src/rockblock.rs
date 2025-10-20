@@ -583,7 +583,9 @@ impl RockBlock9704 {
                     break;
                 }
 
-                Timer::after_millis(100).await;
+                info!("[ROCK][{}] Waiting for Iridium status pin to go high...", i);
+
+                Timer::after_millis(1000).await;
 
                 i += 1;
                 if i > MAX_POWER_ON_ITERATIONS {

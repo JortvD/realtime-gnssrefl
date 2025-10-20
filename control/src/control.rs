@@ -46,7 +46,7 @@ pub async fn task_control(
     let mut realtime_status = RealtimeStatus::NotAvailable;
     let mut sectors: SectorList;
     let mut sleep_until_time: Option<u32> = None;
-    let mut sleep_until_days: Option<u32> = None;
+    let mut sleep_until_date: Option<u32> = None;
     let sector_storage = SectorStorage::new();
 
     // Latest battery and temperature
@@ -59,6 +59,9 @@ pub async fn task_control(
         let result = sector_storage.load(storage, true);
         if let Ok(loaded_sectors) = result {
             sectors = loaded_sectors;
+            // sectors = SectorList::new();
+            // sector_storage.save(storage, &sectors).expect("Should save sectors");
+
             info!("[cont] loaded {} sectors from storage", sectors.len());
         } else {
             sectors = SectorList::new();
@@ -136,7 +139,7 @@ pub async fn task_control(
         // Wait for responses
         save_sectors(storage, &mut sectors).await;
 
-        let mut timer = if let Some(st) = sleep_until_time && let Some(sd) = sleep_until_days {
+        let mut timer = if let Some(st) = sleep_until_time && let Some(sd) = sleep_until_date {
             realtime.get_timer(st, sd)
         } else {
             Timer::after_secs(u32::MAX as u64)
@@ -159,11 +162,11 @@ pub async fn task_control(
                     let sector: &mut Sector = sectors.get_mut(idx);
                     sector.state = SectorState::TO_MEASURE;
 
-                    let (next_sector, next_start_time, next_start_days) = scheduler.get_next_sector(&config, &realtime, sector);
+                    let (next_sector, next_start_time, next_start_date) = scheduler.get_next_sector(&config, &realtime, sector);
                     sleep_until_time = Some(next_start_time);
-                    sleep_until_days = Some(next_start_days);
+                    sleep_until_date = Some(next_start_date);
                     sectors.push(next_sector);
-                        sectors.set_changed(true);
+                    sectors.set_changed(true);
                 } else {
                     info!("No sector in AWAITING state when timer expired");
                 }
@@ -175,9 +178,9 @@ pub async fn task_control(
                         realtime.update_time(deviation);
                         realtime.update_date(date);
                         realtime_status = RealtimeStatus::Available;
-                        let (first_sector, first_start_time, first_start_days) = scheduler.get_first_sector(&config, &realtime);
+                        let (first_sector, first_start_time, first_start_date) = scheduler.get_first_sector(&config, &realtime);
                         sleep_until_time = Some(first_start_time);
-                        sleep_until_days = Some(first_start_days);
+                        sleep_until_date = Some(first_start_date);
                         sectors.push(first_sector);
                         sectors.set_changed(true);
                     },
