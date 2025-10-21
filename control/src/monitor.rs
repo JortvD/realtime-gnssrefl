@@ -70,7 +70,8 @@ pub async fn task_monitor(
 
                 }
             }
-            Either3::Third(charge_state) => {
+            Either3::Third(()) => {
+                let charge_state = battery.get_state().await;
                 info!("[moni] Charge controller state: {:?}", charge_state);
                 charge_state_monitor.set_state(charge_state);
 
