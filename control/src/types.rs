@@ -94,55 +94,72 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("00:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("01:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("02:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("03:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("04:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("05:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("06:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("07:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("08:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("09:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("10:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("16:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("17:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("18:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("19:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("20:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("21:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("22:40:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("23:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("01:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("02:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("03:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("04:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("05:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("06:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("07:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("08:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("09:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("10:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("11:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("12:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("13:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("16:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("17:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("18:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("19:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("20:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("21:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("22:40:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("23:40:00").unwrap()).unwrap();
 
 
         // mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:15:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("20:30:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
+
+        // mid_times.push(utils::time_str_to_seconds("23:59:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:04:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("23:57:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:03:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("23:50:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:00:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:10:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:20:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("00:30:00").unwrap()).unwrap();
         
         Self {
             pre_min_elevation: 5,
             pre_max_elevation: 30,
-            pre_min_azimuth: 200,
-            pre_max_azimuth: 290,
+            pre_min_azimuth: 140,
+            pre_max_azimuth: 280,
 
             post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 200,
-            post_max_azimuth: 290,
+            post_min_azimuth: 150,
+            post_max_azimuth: 270,
 
             min_relative_height: 0.5,
-            max_relative_height: 10.0,
-            relative_height_step_size: 0.02,
+            max_relative_height: 15.0,
+            relative_height_step_size: 0.03,
 
             qc_min_elevation_range: 8,
             qc_iqr_size: 1.5,
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 10,
+            bins_per_sector: 20,
             seconds_per_bin: 240,
 
             num_send_measurements: 3,

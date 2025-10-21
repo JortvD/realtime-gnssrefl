@@ -38,6 +38,14 @@ def map_u8_to_int(byte_val: int, min_val: int, max_val: int) -> int:
     scaled = byte_val / 255.0
     return int(round(min_val + scaled * (max_val - min_val)))
 
+def map_battery_state(batt_state_raw: int) -> dict:
+    return {
+        "charging": (batt_state_raw & 0b11000000) >> 6,
+        "level": (batt_state_raw & 0b00110000) >> 4,
+        "health": (batt_state_raw & 0b00001100) >> 2,
+        "status": batt_state_raw & 0b00000011
+    }
+
 MESSAGES_FOLDER = 'messages'
 STATIC_FOLDER = 'static'
 os.makedirs(MESSAGES_FOLDER, exist_ok=True)
@@ -50,17 +58,18 @@ def webhook():
     print(data)
     message_b64 = data.get('message', [])
     packet_bytes = base64.b64decode(str(message_b64))
-    HEADER_FORMAT = "<BBBB"           # battery, temp, lat, lon (4 bytes)
+    HEADER_FORMAT = "<BBBBB"           # battery, temp, lat, lon, batt_state (5 bytes)
     MEASUREMENT_FORMAT = "<BHBBB"     # u8, u16 (LE), u8, u8, u8 (6 bytes)
     HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
     MEASUREMENT_SIZE = struct.calcsize(MEASUREMENT_FORMAT)
 
     # Parse header
     header_data = packet_bytes[:HEADER_SIZE]
-    battery_raw, temp_raw, lat, lon = struct.unpack(HEADER_FORMAT, header_data)
+    battery_raw, temp_raw, lat, lon, batt_state_raw = struct.unpack(HEADER_FORMAT, header_data)
 
     battery = map_u8_to_int(battery_raw, MIN_BATTERY_MV, MAX_BATTERY_MV)
     temp = map_u8_to_float(temp_raw, MIN_TEMPERATURE_C, MAX_TEMPERATURE_C)
+    batt_state = map_battery_state(batt_state_raw)
 
     measurements_bytes = packet_bytes[HEADER_SIZE:]
     measurements = []
@@ -86,6 +95,7 @@ def webhook():
         "temperature": temp,
         "latitude": lat,
         "longitude": lon,
+        "battery_state": batt_state,
         "measurements": measurements
     }
 
