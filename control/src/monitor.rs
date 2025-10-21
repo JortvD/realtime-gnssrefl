@@ -15,18 +15,21 @@ pub async fn task_monitor(
     let mut battery_mv: f32 = 0.0;
     let mut chip_temp_c: f32 = 0.0;
     let mut next_adc_measurement = Instant::now();
+
     let mut charge_state_monitor = ChargeStateMonitor::new();
+    let mut charge_state = ChargeState::Unknown;
+    let mut next_charge_poll = Instant::now();
 
     info!("[moni] starting");
     
     loop {
         let mut adc_timer = Timer::at(next_adc_measurement);
+        let mut charge_timer = Timer::at(next_charge_poll);
 
         let result = select3(
             &mut adc_timer,
             channel_req.receive(),
-            // battery.wait_state_change()
-            Timer::after_secs(100000000)
+            &mut charge_timer
         ).await;
         match result {
             Either3::First(_) => {
@@ -70,25 +73,31 @@ pub async fn task_monitor(
 
                 }
             }
-            Either3::Third(()) => {
-                let charge_state = battery.get_state();
-                info!("[moni] Charge controller state: {:?}", charge_state);
-                charge_state_monitor.set_state(charge_state);
+            Either3::Third(_) => {
+                let cs = battery.get_state();
+                
+                if cs != charge_state {
+                    charge_state = cs;
+                    info!("[moni] Charge controller state: {:?}", charge_state);
+                    charge_state_monitor.set_state(charge_state);
 
-                let statefraction = charge_state_monitor.get_fraction();
-                channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
+                    let statefraction = charge_state_monitor.get_fraction();
+                    channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
 
-                let (a,b,c,d) = unpack_fractions(statefraction);
-                info!(
-                    "[moni] ChargeState fraction byte: 0x{:02X}, completed: {:?}, charging: {:?}, recoverable: {:?}, nonrecoverable: {:?}",
-                    statefraction, a, b, c, d
-                );
+                    let (a,b,c,d) = unpack_fractions(statefraction);
+                    info!(
+                        "[moni] ChargeState fraction byte: 0x{:02X}, completed: {:?}, charging: {:?}, recoverable: {:?}, nonrecoverable: {:?}",
+                        statefraction, a, b, c, d
+                    );
 
-                if charge_state == ChargeState::NonRecoverableFault {
-                    info!("[moni] Toggling charge controller CE");
-                    battery.toggle_ce().await;
-                    info!("[moni] Toggling charge controller CE done");
+                    if charge_state == ChargeState::NonRecoverableFault {
+                        info!("[moni] Toggling charge controller CE");
+                        battery.toggle_ce().await;
+                        info!("[moni] Toggling charge controller CE done");
+                    }
                 }
+
+                next_charge_poll = next_charge_poll.saturating_add(Duration::from_secs(10));
             }
         }
     }
