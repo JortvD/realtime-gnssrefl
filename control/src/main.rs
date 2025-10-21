@@ -94,7 +94,7 @@ type StorageType = Mutex<CriticalSectionRawMutex, Option<FlashStorage>>;
 static STORAGE: StorageType = Mutex::new(None);
 
 fn create_clock_config() -> ClockConfig {
-    let result = ClockConfig::system_freq(150_000_000);
+    let result = ClockConfig::system_freq(20_000_000);
 
     if result.is_err() {
         error!("Failed to set system clock frequency");
@@ -189,13 +189,14 @@ async fn main(spawner: Spawner) {
         error!("Failed to spawn watchdog feeder task: {}", result.unwrap_err());
     }
 
-    if dump_pin.is_low() {
+    // if dump_pin.is_low() {
         info!("[main] dump pin is low, dumping storage and halting");
         Timer::after_millis(500).await;
         let start = Instant::now();
         dump::dump(&STORAGE).await;
         info!("[main] dump complete in {} ms, halting", start.elapsed().as_millis());
-    }
+        return;
+    // }
 
     info!("[main] spawning tasks");
     let result = spawner.spawn(task_measure(
