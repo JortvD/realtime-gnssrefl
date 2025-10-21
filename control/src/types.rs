@@ -124,7 +124,7 @@ impl Default for Config {
         // mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
         // mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("09:15:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("16:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("10:55:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("20:30:00").unwrap()).unwrap();
         mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
