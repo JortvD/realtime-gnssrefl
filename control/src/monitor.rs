@@ -25,7 +25,8 @@ pub async fn task_monitor(
         let result = select3(
             &mut adc_timer,
             channel_req.receive(),
-            battery.wait_state_change()
+            // battery.wait_state_change()
+            Timer::after_secs(100000000)
         ).await;
         match result {
             Either3::First(_) => {
