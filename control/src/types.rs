@@ -63,6 +63,7 @@ pub struct Config {
 
     pub qc_min_elevation_range: u32,
     pub qc_iqr_size: f32,
+    pub qc_min_peak_to_peak: f32,
 
     pub sector_mid_times: Vec<u32, MAX_MIDPOINTS>,
 
@@ -139,6 +140,7 @@ impl Default for Config {
 
             qc_min_elevation_range: 8,
             qc_iqr_size: 1.5,
+            qc_min_peak_to_peak: 2.0,
 
             sector_mid_times: mid_times,
 
@@ -481,7 +483,7 @@ impl Sector {
 pub const MAX_MEASUREMENT_OBSERVATIONS: usize = 128;
 
 pub const MEASUREMENT_HEADER_SIZE: usize = 32;
-pub const OBSERVATION_SIZE: usize = 28;
+pub const OBSERVATION_SIZE: usize = 31;
 
 pub const MEASUREMENT_SIZE: usize = MEASUREMENT_HEADER_SIZE + (OBSERVATION_SIZE * MAX_MEASUREMENT_OBSERVATIONS);
 
@@ -527,7 +529,7 @@ impl Measurement {
 
         for i in 0..MAX_MEASUREMENT_OBSERVATIONS {
             let offset = MEASUREMENT_HEADER_SIZE + i * OBSERVATION_SIZE;
-            let obs_data: &[u8; 28] = data[offset..offset + 28].try_into().unwrap();
+            let obs_data: &[u8; OBSERVATION_SIZE] = data[offset..offset + OBSERVATION_SIZE].try_into().unwrap();
             let observation = Observation::from_bytes(obs_data);
             if observation.used {
                 observations.push(observation).ok();
@@ -578,13 +580,15 @@ pub struct Observation {
     pub end_time: u16,
     pub max_amp: f32,
     pub max_rh: f32,
+    pub max_amp_2: f32,
+    pub max_rh_2: f32,
     pub mean_amp: f32,
     pub num_recs: u32,
     pub used: bool,
 }
 
 impl Observation {
-    pub fn from_bytes(data: &[u8; 28]) -> Self {
+    pub fn from_bytes(data: &[u8; OBSERVATION_SIZE]) -> Self {
         let sat_id = u16::from_le_bytes([data[0], data[1]]);
         let start_time = u16::from_le_bytes([data[2], data[3]]);
         let end_time = u16::from_le_bytes([data[4], data[5]]);
@@ -593,6 +597,8 @@ impl Observation {
         let mean_amp = f32::from_le_bytes([data[14], data[15], data[16], data[17]]);
         let num_recs = u32::from_le_bytes([data[18], data[19], data[20], data[21]]);
         let used = data[22] != 0;
+        let max_amp_2 = f32::from_le_bytes([data[23], data[24], data[25], data[26]]);
+        let max_rh_2 = f32::from_le_bytes([data[27], data[28], data[29], data[30]]);
 
         Self {
             sat_id,
@@ -603,6 +609,8 @@ impl Observation {
             mean_amp,
             num_recs,
             used,
+            max_amp_2,
+            max_rh_2,
         }
     }
 
@@ -615,8 +623,8 @@ impl Observation {
         }
     }
 
-    pub fn to_bytes(&self) -> [u8; 28] {
-        let mut data = [0u8; 28];
+    pub fn to_bytes(&self) -> [u8; OBSERVATION_SIZE] {
+        let mut data = [0u8; OBSERVATION_SIZE];
         data[0..2].copy_from_slice(&self.sat_id.to_le_bytes());
         data[2..4].copy_from_slice(&self.start_time.to_le_bytes());
         data[4..6].copy_from_slice(&self.end_time.to_le_bytes());
@@ -625,6 +633,8 @@ impl Observation {
         data[14..18].copy_from_slice(&self.mean_amp.to_le_bytes());
         data[18..22].copy_from_slice(&self.num_recs.to_le_bytes());
         data[22] = if self.used { 1 } else { 0 };
+        data[23..27].copy_from_slice(&self.max_amp_2.to_le_bytes());
+        data[27..31].copy_from_slice(&self.max_rh_2.to_le_bytes());
         data
     }
 }
