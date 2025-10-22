@@ -33,7 +33,7 @@ pub const MEASUREMENTS_CONTAINER_START: usize = 50;
 pub const SECTOR_CONTAINER_START: usize = 51; // 1 block
 
 pub const BURST_SIZE: usize = 64; // Samples per burst
-pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin (4 minutes)
+pub const BIN_BURST_SIZE: usize = 240;  // Burst per bin 
 
 pub const MEASUREMENT_STORAGE_SIZE: usize = BLOCK_SIZE; // 4KB
 
@@ -94,58 +94,33 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("01:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("07:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("10:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("16:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("19:30:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("22:30:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("01:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("02:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("03:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("04:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("05:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("06:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("07:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("08:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("09:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("10:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("11:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("12:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("13:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("14:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("15:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("16:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("17:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("18:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("19:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("20:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("21:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("22:40:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("23:40:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("07:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("08:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("08:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("09:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("10:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("10:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("12:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("13:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("15:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("16:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("16:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("17:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("17:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("18:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("18:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("19:20:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("19:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("20:00:00").unwrap()).unwrap();
 
-
-        // mid_times.push(utils::time_str_to_seconds("04:30:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("07:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("09:30:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("09:15:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap(); 
-        // mid_times.push(utils::time_str_to_seconds("20:30:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
-
-        // mid_times.push(utils::time_str_to_seconds("23:59:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:04:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("23:57:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:03:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("23:50:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:00:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:10:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:20:00").unwrap()).unwrap();
-        // mid_times.push(utils::time_str_to_seconds("00:30:00").unwrap()).unwrap();
         
         Self {
             pre_min_elevation: 5,
@@ -167,8 +142,8 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 30,
-            seconds_per_bin: 240,
+            bins_per_sector: 1,
+            seconds_per_bin: 240*5,
 
             num_send_measurements: 3,
             measure_timeout: 60,
