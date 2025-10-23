@@ -95,25 +95,31 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut mid_times = Vec::<u32, MAX_MIDPOINTS>::new();
-        mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("12:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("13:50:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
-        mid_times.push(utils::time_str_to_seconds("14:50:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("11:20:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("11:50:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("12:20:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("13:50:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("14:20:00").unwrap()).unwrap();
+        // mid_times.push(utils::time_str_to_seconds("14:50:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("02:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("06:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("10:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("14:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("18:00:00").unwrap()).unwrap();
+        mid_times.push(utils::time_str_to_seconds("22:00:00").unwrap()).unwrap();
 
 
         
         Self {
             pre_min_elevation: 5,
             pre_max_elevation: 30,
-            pre_min_azimuth: 200,
-            pre_max_azimuth: 290,
+            pre_min_azimuth: 120,
+            pre_max_azimuth: 270,
 
             post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 200,
-            post_max_azimuth: 290,
+            post_min_azimuth: 120,
+            post_max_azimuth: 270,
 
             min_relative_height: 0.5,
             max_relative_height: 10.0,
@@ -125,7 +131,7 @@ impl Default for Config {
 
             sector_mid_times: mid_times,
 
-            bins_per_sector: 1,
+            bins_per_sector: 6,
             seconds_per_bin: 240*5,
 
             num_send_measurements: 3,
