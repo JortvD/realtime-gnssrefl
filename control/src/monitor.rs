@@ -17,7 +17,6 @@ pub async fn task_monitor(
     let mut next_adc_measurement = Instant::now();
 
     let mut charge_state_monitor = ChargeStateMonitor::new();
-    let mut charge_state = ChargeState::Unknown;
     let mut next_charge_poll = Instant::now();
 
     info!("[moni] starting");
@@ -74,15 +73,14 @@ pub async fn task_monitor(
                 }
             }
             Either3::Third(_) => {
-                let cs = battery.get_state();
+                let charge_state = battery.get_state();
                 
-                if cs != charge_state {
-                    charge_state = cs;
+                if charge_state != charge_state_monitor.get_state() {
                     info!("[moni] Charge controller state: {:?}", charge_state);
                     charge_state_monitor.set_state(charge_state);
 
                     let statefraction = charge_state_monitor.get_fraction();
-                    channel_res.send(MonResMsg::ChargeStateFraction { fraction: charge_state_monitor.get_fraction() }).await;
+                    channel_res.send(MonResMsg::ChargeStateFraction { fraction: statefraction }).await;
 
                     let (a,b,c,d) = unpack_fractions(statefraction);
                     info!(
@@ -161,6 +159,10 @@ impl ChargeStateMonitor {
 
         self.current_state = charge_state;
         self.last_time = Instant::now();
+    }
+
+    pub fn get_state(&mut self) -> ChargeState {
+        self.current_state
     }
 
     pub fn get_fraction(&mut self) -> u8 {
