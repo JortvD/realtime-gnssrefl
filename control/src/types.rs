@@ -122,8 +122,8 @@ impl Default for Config {
             post_max_azimuth: 280,
 
             min_relative_height: 0.5,
-            max_relative_height: 10.0,
-            relative_height_step_size: 0.02,
+            max_relative_height: 15.0,
+            relative_height_step_size: 0.03,
 
             qc_min_elevation_range: 8,
             qc_iqr_size: 1.5,
