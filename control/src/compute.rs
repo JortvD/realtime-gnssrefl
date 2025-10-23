@@ -173,7 +173,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] arc sat {}, {}..{}",
             idx,
-            total_arcs,
+            total_arcs-1,
             arc.id,
             arc.start_time,
             arc.end_time
@@ -206,7 +206,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] fetched {} records in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             num_records,
             (Instant::now() - start).as_millis()
         );
@@ -218,7 +218,7 @@ async fn run_compute(
             info!(
                 "[comp][{:03}/{:03}] elevation range {} too small, skipping",
                 idx,
-                total_arcs,
+                total_arcs-1,
                 max_elev - min_elev
             );
             yield_now().await;
@@ -231,7 +231,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] smoothed elevation in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             (Instant::now() - start).as_millis()
         );
 
@@ -241,7 +241,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] freq {} MHz, cf {} (net {}, band {})",
             idx,
-            total_arcs,
+            total_arcs-1,
             freq_hz / 1_000_000.0,
             cf,
             net,
@@ -254,7 +254,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] computed {} transformed elevations in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             elevs.len(),
             (Instant::now() - start).as_millis()
         );
@@ -265,7 +265,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] computed {} transformed snrs in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             snrs.len(),
             (Instant::now() - start).as_millis()
         );
@@ -276,7 +276,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] detrended SNR in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             (Instant::now() - start).as_millis()
         );
 
@@ -286,7 +286,7 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] sorted {} pairs in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             elevs.len(),
             (Instant::now() - start).as_millis()
         );
@@ -300,17 +300,31 @@ async fn run_compute(
         info!(
             "[comp][{:03}/{:03}] Lomb-Scargle in {} ms",
             idx,
-            total_arcs,
+            total_arcs-1,
             (Instant::now() - start).as_millis()
         );
 
-        if let Some((max_amp, max_rh, mean_amp)) = ampl_stats(&range, &ampls) {
+        if let Some((max_amp, max_rh, max_amp_2, max_rh_2, mean_amp)) = ampl_stats(&range, &mut ampls, num_records) {
+            if max_amp / max_amp_2 < config.qc_min_peak_to_peak {
+                info!(
+                    "[comp][{:03}/{:03}] peak to peak ratio {} below threshold {}, skipping",
+                    idx,
+                    total_arcs-1,
+                    max_amp / max_amp_2,
+                    config.qc_min_peak_to_peak
+                );
+                yield_now().await;
+                continue;
+            }
+
             let observation = Observation {
                 sat_id: arc.id,
                 start_time: arc.start_time,
                 end_time: arc.end_time,
                 max_amp,
                 max_rh,
+                max_amp_2,
+                max_rh_2,
                 mean_amp,
                 num_recs: num_records,
                 used: false,
@@ -319,7 +333,7 @@ async fn run_compute(
             info!(
                 "[comp][{:03}/{:03}] sat {} ({}..{}) - max_amp {}, max_rh {}, mean_amp {}, peak/mean {}, num_recs {} in {} ms",
                 idx,
-                total_arcs,
+                total_arcs-1,
                 observation.sat_id, 
                 observation.start_time, 
                 observation.end_time,
@@ -333,7 +347,7 @@ async fn run_compute(
 
             observations.push(observation).map_err(|_| ComputeError::ObservationOverflow)?;
         } else {
-            info!("[comp][{:03}/{:03}] no valid amplitude values, skipping after {} ms", idx, total_arcs, (Instant::now() - full_start).as_millis());
+            info!("[comp][{:03}/{:03}] no valid amplitude values, skipping after {} ms", idx, total_arcs-1, (Instant::now() - full_start).as_millis());
         }
 
         yield_now().await;
@@ -474,11 +488,21 @@ fn transform_snrs(snrs: &mut SampleVec) {
 }
 
 #[inline]
-fn ampl_stats(range: &RangeVec, ampl: &AmplVec) -> Option<(f32, f32, f32)> {
+fn ampl_stats(range: &RangeVec, ampl: &mut AmplVec, length: u32) -> Option<(f32, f32, f32, f32, f32)> {
     let mut max = 0.0f32;
     let mut max_idx = 0usize;
     let mut mean_acc = 0.0f64;
     let mut count: u32 = 0;
+
+    let length_f = if length == 0 { 1.0 } else { length as f32 };
+
+    for p in ampl.iter_mut() {
+        if p.is_finite() && *p > 0.0 {
+            *p = sqrtf(*p / length_f) * 2.0;
+        } else {
+            *p = 0.0;
+        }
+    }
 
     for (i, &p) in ampl.iter().enumerate() {
         if p.is_finite() && p > 0.0 {
@@ -490,11 +514,29 @@ fn ampl_stats(range: &RangeVec, ampl: &AmplVec) -> Option<(f32, f32, f32)> {
             count = count.saturating_add(1);
         }
     }
+
+    let mut second_peak_idx: Option<usize> = None;
+    let mut second_peak_val: f32 = 0.0;
+    if ampl.len() >= 3 {
+        for i in 1..(ampl.len() - 1) {
+            if i == max_idx {
+                continue;
+            }
+            let v = ampl[i];
+            if v.is_finite() && v > 0.0 && ampl[i - 1] < v && ampl[i + 1] < v {
+                if second_peak_idx.is_none() || v > second_peak_val {
+                    second_peak_idx = Some(i);
+                    second_peak_val = v;
+                }
+            }
+        }
+    }
+
     if count == 0 {
         None
     } else {
         let mean = (mean_acc / count as f64) as f32;
-        Some((max, range[max_idx], mean))
+        Some((max, range[max_idx], second_peak_val, range[second_peak_idx.unwrap_or(0)], mean))
     }
 }
 

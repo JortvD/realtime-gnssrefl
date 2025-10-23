@@ -28,7 +28,7 @@ pub async fn dump(storage: &'static StorageType) {
     }
 
     info!("MEASUREMENT:idx, uid, mean, std, num_seen, start_time, end_time, lat, lon");
-    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs");
+    info!("OBSERVATION:meas_idx, obs_idx, sat_id, start_time, end_time, used, max_rh, max_amp, mean_amp, num_recs, max_rh_2, max_amp_2");
     let measurement_storage = MeasurementStorage::new();
     for i in 0..NUM_MEASUREMENTS {
         if let Some(measurement) = measurement_storage.read(storage, i as u32) {
@@ -50,7 +50,7 @@ pub async fn dump(storage: &'static StorageType) {
                 if observation.sat_id == u16::MAX {
                     continue;
                 }
-                info!("OBSERVATION:{}, {}, {}, {}, {}, {}, {}, {}, {}, {}",
+                info!("OBSERVATION:{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}",
                     i,
                     j,
                     observation.sat_id,
@@ -60,7 +60,9 @@ pub async fn dump(storage: &'static StorageType) {
                     observation.max_rh,
                     observation.max_amp,
                     observation.mean_amp,
-                    observation.num_recs
+                    observation.num_recs,
+                    observation.max_rh_2,
+                    observation.max_amp_2
                 );
 
                 Timer::after_millis(1).await;
