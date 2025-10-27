@@ -113,13 +113,13 @@ impl Default for Config {
         Self {
             pre_min_elevation: 5,
             pre_max_elevation: 30,
-            pre_min_azimuth: 130,
-            pre_max_azimuth: 280,
+            pre_min_azimuth: 200,
+            pre_max_azimuth: 290,
 
             post_min_elevation: 5,
             post_max_elevation: 30,
-            post_min_azimuth: 130,
-            post_max_azimuth: 280,
+            post_min_azimuth: 200,
+            post_max_azimuth: 290,
 
             min_relative_height: 0.5,
             max_relative_height: 15.0,
