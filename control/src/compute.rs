@@ -496,9 +496,17 @@ fn ampl_stats(range: &RangeVec, ampl: &mut AmplVec, length: u32) -> Option<(f32,
 
     let length_f = if length == 0 { 1.0 } else { length as f32 };
 
+    let mut sum = 0.0f32;
+
+    for &p in ampl.iter() {
+        if p.is_finite() && p > 0.0 {
+            sum += p;
+        }
+    }
+
     for p in ampl.iter_mut() {
         if p.is_finite() && *p > 0.0 {
-            *p = sqrtf(*p / length_f) * 2.0;
+            *p = (*p * length_f) / sum;
         } else {
             *p = 0.0;
         }
