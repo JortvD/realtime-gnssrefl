@@ -191,6 +191,7 @@ pub async fn task_control(
                         let sector = sectors.get_mut_uid(sector_uid).expect("Sector should exist");
                         sector.state = SectorState::TO_COMPUTE;
                         realtime.update_time(result.deviation);
+                        realtime.update_date(result.date);
                         sector.update_coords(result.lat, result.lon);
                         sectors.set_changed(true);
                     },
