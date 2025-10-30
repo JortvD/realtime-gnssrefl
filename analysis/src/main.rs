@@ -18,21 +18,21 @@ fn read_nmea_file(file_path: &str) -> Vec<String> {
         .lines()
         .map(|line| line.to_string())
         .collect::<Vec<String>>();
-    println!("Reading NMEA file took: {:?}", start.elapsed());
+    // println!("Reading NMEA file took: {:?}", start.elapsed());
     lines
 }
 
 fn parse_nmea(nmea_sentences: Vec<String>, config: &config::Config) -> Vec<db::record::Record> {
     let start = std::time::Instant::now();
     let records = nmea::nmea_to_records(nmea_sentences, config);
-    println!("NMEA parsing took: {:?}", start.elapsed());
+    // println!("NMEA parsing took: {:?}", start.elapsed());
     records
 }
 
 fn find_arcs(records: &VecDeque<db::record::Record>) -> Vec<db::arc::Arc> {
     let start = std::time::Instant::now();
     let arcs = gnssir::find_arcs(records);
-    println!("Finding arcs took: {:?}", start.elapsed());
+    // println!("Finding arcs took: {:?}", start.elapsed());
     arcs
 }
 
@@ -41,12 +41,12 @@ fn process_arcs(arcs: &Vec<db::arc::Arc>, records: &mut VecDeque<db::record::Rec
     for arc in arcs {
         gnssir::fix_arc_elev_azim(arc, records);
     }
-    println!("Fixing arc elevation and azimuth took: {:?}", start.elapsed());
+    // println!("Fixing arc elevation and azimuth took: {:?}", start.elapsed());
     let start = std::time::Instant::now();
     for arc in arcs {
         gnssir::correct_arc_snr(arc, records);
     }
-    println!("Correcting arc SNR took: {:?}", start.elapsed());
+    // println!("Correcting arc SNR took: {:?}", start.elapsed());
 }
 
 fn start_csv(file_path: &str, headers: &[&str]) -> Writer<std::fs::File> {
@@ -111,55 +111,65 @@ fn find_results(arcs: &Vec<db::arc::Arc>, records: &VecDeque<db::record::Record>
     println!("Collecting results took: {:?}", start.elapsed());
 }
 
+fn run_analysis(nmea_file: &str) -> (Duration, Duration) {
+    let config = config::Config::default();
+
+    let start = std::time::Instant::now();
+    let nmea_sentences = read_nmea_file(nmea_file);
+    let records_vec = parse_nmea(nmea_sentences, &config);
+    let mut records: VecDeque<db::record::Record> = VecDeque::from(records_vec);
+    let duration_read_parse = start.elapsed();
+
+    let start = std::time::Instant::now();
+    let arcs = find_arcs(&records);
+    process_arcs(&arcs, &mut records);
+    let duration_process = start.elapsed();
+
+    (duration_read_parse, duration_process)
+}
+
+const FOLDER_PATH: &str = "data2/";
+
 fn main() {
-    let start: std::time::Instant = std::time::Instant::now();
-    let config: config::Config = config::Config::default();
-    let mut record_db: db::record::RecordDatabase = db::record::RecordDatabase::new();
-
-    let nmea_sentences = read_nmea_file("data/nmea2.txt");
-    let records = parse_nmea(nmea_sentences, &config);
-
-    println!("Parsed {} records from NMEA sentences.", records.len());
-
-    record_db.insert_many(records);
-
-    // for record in &record_db.records {
-    //     println!(
-    //         "Record - ID: {:05}, Network: {:1}, Band: {:1}, Elevation: {:>2}, Azimuth: {:>3}, SNR: {:>2}, Time: {:>5}",
-    //         record.id,
-    //         record.network as u32,
-    //         record.band as u32,
-    //         record.elevation,
-    //         record.azimuth,
-    //         record.snr,
-    //         record.time
-    //     );
-    // }
-
-    println!("Database now contains {} records, with size {} KB", record_db.len(), record_db.check_memory()/(1024));
-    
-    // let arcs = find_arcs(&record_db.records);
-    // println!("Found {} arcs in the records.", arcs.len());
-    
-    // process_arcs(&arcs, &mut record_db.records);
-
-    let mut wtr = start_csv("results/records.csv", &["id", "time", "network", "band", "elevation", "azimuth", "snr"]);
-    for record in &record_db.records {
-        write_to_csv(
-            &mut wtr,
-            &[
-                record.id.to_string(),
-                record.time.to_string(),
-                format!("{:?}", record.network),
-                format!("{:?}", record.band),
-                record.elevation.to_string(),
-                record.azimuth.to_string(),
-                record.snr.to_string(),
-            ],
-        );
+    let mut t1 = Vec::<u32>::new();
+    let mut t2 = Vec::<u32>::new();
+    let mut iterations = 5;
+    for i in 0..5 {
+        let mut t1_sum = 0u32;
+        let mut t2_sum = 0u32;
+        for file in std::fs::read_dir(FOLDER_PATH).expect("Failed to read data folder") {
+            let file = file.expect("Failed to read file in data folder");
+            let file_path = file.path();
+            if file_path.is_file() {
+                println!("Processing file: {:?}", file_path);
+                let (duration_read_parse, duration_process) = run_analysis(file_path.to_str().unwrap());
+                t1_sum += duration_read_parse.as_millis() as u32;
+                t2_sum += duration_process.as_millis() as u32;
+            }
+        }
+        t1.push(t1_sum);
+        t2.push(t2_sum);
     }
-    flush_csv(&mut wtr);
 
-    // find_results(&arcs, &record_db.records, &config);
-    // println!("Total runtime: {:?}", start.elapsed());
+    let mut t1_sum = t1.iter().sum::<u32>();
+    let mut t2_sum = t2.iter().sum::<u32>();
+
+    let t1_mean = t1_sum as f32 / iterations as f32;
+    let t2_mean = t2_sum as f32 / iterations as f32;
+
+    let t1_std = (t1.iter().map(|&x| (x as f32 - t1_mean).powi(2)).sum::<f32>() / iterations as f32).sqrt();
+    let t2_std = (t2.iter().map(|&x| (x as f32 - t2_mean).powi(2)).sum::<f32>() / iterations as f32).sqrt();
+
+    let total_sum = t1.iter().zip(t2.iter()).map(|(&x, &y)| x + y).sum::<u32>();
+    let total_mean = total_sum as f32 / iterations as f32;
+    let total_std = (t1.iter().zip(t2.iter())
+        .map(|(&x, &y)| {
+            let total = x + y;
+            (total as f32 - total_mean).powi(2)
+        })
+        .sum::<f32>() / iterations as f32).sqrt();
+
+    println!("Average read & parse time: {:.2} ms ± {:.2} ms", t1_mean, t1_std);
+    println!("Average process time: {:.2} ms ± {:.2} ms", t2_mean, t2_std);
+    println!("Average total time: {:.2} ms ± {:.2} ms", total_mean, total_std);
 }
