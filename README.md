@@ -29,3 +29,6 @@ And to start the dashboard run:
 $ cd dashboard
 $ python main.py
 ```
+
+## Design files
+Fusion files of the PCB prototype (unfinished). Can also be found here as long as the link is live: https://a360.co/3LjTuod
